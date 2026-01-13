@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PokeArbitrage Scanner | PSA 10 Opportunities</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: #1a1a25;
+            --bg-hover: #222233;
+            --accent-gold: #ffd700;
+            --accent-electric: #00d4ff;
+            --accent-profit: #00ff88;
+            --accent-fire: #ff6b35;
+            --text-primary: #f0f0f5;
+            --text-secondary: #8888aa;
+            --text-muted: #5555777;
+            --border-subtle: #2a2a3a;
+            --gradient-gold: linear-gradient(135deg, #ffd700 0%, #ff9500 100%);
+            --gradient-electric: linear-gradient(135deg, #00d4ff 0%, #0088ff 100%);
+            --shadow-glow: 0 0 40px rgba(255, 215, 0, 0.15);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Chakra Petch', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(ellipse at 20% 0%, rgba(255, 215, 0, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 100%, rgba(0, 212, 255, 0.06) 0%, transparent 50%);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            padding: 3rem 0;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 2rem;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: var(--gradient-gold);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .tagline {
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+            font-size: 1rem;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+
+        .stats-bar {
+            display: flex;
+            justify-content: center;
+            gap: 3rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .stat-value.gold { color: var(--accent-gold); }
+        .stat-value.electric { color: var(--accent-electric); }
+        .stat-value.profit { color: var(--accent-profit); }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-top: 0.25rem;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .sort-btn {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: 'Chakra Petch', sans-serif;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .sort-btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent-electric);
+            color: var(--text-primary);
+        }
+
+        .sort-btn.active {
+            background: var(--gradient-electric);
+            border-color: transparent;
+            color: var(--bg-primary);
+            font-weight: 600;
+        }
+
+        .opportunities-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .opportunity-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .opportunity-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-glow);
+            border-color: var(--accent-gold);
+        }
+
+        .discount-badge {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: var(--gradient-gold);
+            color: var(--bg-primary);
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1rem;
+            z-index: 10;
+        }
+
+        .card-image {
+            width: 100%;
+            height: 220px;
+            object-fit: contain;
+            background: var(--bg-secondary);
+            padding: 1rem;
+        }
+
+        .card-image.placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            color: var(--text-muted);
+        }
+
+        .card-content {
+            padding: 1.5rem;
+        }
+
+        .card-name {
+            color: var(--accent-electric);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 500;
+            line-height: 1.4;
+            margin-bottom: 1rem;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .price-comparison {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+        }
+
+        .price-box {
+            flex: 1;
+            text-align: center;
+        }
+
+        .price-label {
+            font-size: 0.625rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.25rem;
+        }
+
+        .price-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .price-value.listing {
+            color: var(--accent-profit);
+        }
+
+        .price-value.market {
+            color: var(--text-secondary);
+        }
+
+        .price-arrow {
+            color: var(--accent-fire);
+            font-size: 1.5rem;
+        }
+
+        .profit-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .profit-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .profit-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--accent-profit);
+        }
+
+        .seller-info {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.5rem;
+        }
+
+        .buy-btn {
+            display: block;
+            width: 100%;
+            padding: 1rem;
+            background: var(--gradient-gold);
+            color: var(--bg-primary);
+            text-align: center;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: all 0.2s ease;
+            margin-top: 1rem;
+            border-radius: 8px;
+        }
+
+        .buy-btn:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 20px rgba(255, 215, 0, 0.4);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+
+        .empty-title {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .update-time {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-top: 2rem;
+            padding: 1rem;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .logo {
+                font-size: 1.75rem;
+            }
+
+            .stats-bar {
+                gap: 1.5rem;
+            }
+
+            .stat-value {
+                font-size: 1.75rem;
+            }
+
+            .opportunities-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1 class="logo">PokeArbitrage</h1>
+            <p class="tagline">PSA 10 Arbitrage Scanner</p>
+        </header>
+
+        <div class="stats-bar">
+            <div class="stat">
+                <div class="stat-value gold">{{ count }}</div>
+                <div class="stat-label">Active Opportunities</div>
+            </div>
+            {% if opportunities %}
+            <div class="stat">
+                <div class="stat-value electric">${{ "%.0f"|format(opportunities[0].discount_percentage) }}%</div>
+                <div class="stat-label">Best Discount</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value profit">${{ "%.0f"|format(opportunities[0].potential_profit) }}</div>
+                <div class="stat-label">Top Profit</div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="controls">
+            <a href="?sort=discount&active_only={{ active_only }}" class="sort-btn {{ 'active' if sort == 'discount' else '' }}">
+                By Discount
+            </a>
+            <a href="?sort=profit&active_only={{ active_only }}" class="sort-btn {{ 'active' if sort == 'profit' else '' }}">
+                By Profit
+            </a>
+            <a href="?sort=price&active_only={{ active_only }}" class="sort-btn {{ 'active' if sort == 'price' else '' }}">
+                By Price
+            </a>
+        </div>
+
+        {% if opportunities %}
+        <div class="opportunities-grid">
+            {% for opp in opportunities %}
+            <div class="opportunity-card">
+                <div class="discount-badge">-{{ "%.0f"|format(opp.discount_percentage) }}%</div>
+                
+                {% if opp.image_url %}
+                <img src="{{ opp.image_url }}" alt="{{ opp.card_name }}" class="card-image">
+                {% else %}
+                <div class="card-image placeholder">🎴</div>
+                {% endif %}
+
+                <div class="card-content">
+                    <div class="card-name">{{ opp.card_name }}</div>
+                    <h3 class="card-title">{{ opp.listing_title }}</h3>
+
+                    <div class="price-comparison">
+                        <div class="price-box">
+                            <div class="price-label">Listing</div>
+                            <div class="price-value listing">${{ "%.2f"|format(opp.listing_price) }}</div>
+                        </div>
+                        <div class="price-arrow">→</div>
+                        <div class="price-box">
+                            <div class="price-label">Market</div>
+                            <div class="price-value market">${{ "%.2f"|format(opp.market_price) }}</div>
+                        </div>
+                    </div>
+
+                    <div class="profit-row">
+                        <span class="profit-label">Potential Profit</span>
+                        <span class="profit-value">+${{ "%.2f"|format(opp.potential_profit) }}</span>
+                    </div>
+
+                    {% if opp.seller_username %}
+                    <div class="seller-info">Seller: {{ opp.seller_username }}</div>
+                    {% endif %}
+
+                    <a href="{{ opp.item_url }}" target="_blank" rel="noopener" class="buy-btn">
+                        View on eBay →
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-icon">🔍</div>
+            <h2 class="empty-title">No Opportunities Found</h2>
+            <p>The scanner is actively monitoring PSA 10 listings. Check back soon!</p>
+        </div>
+        {% endif %}
+
+        <div class="update-time">
+            Last updated: {{ updated_at }} • Refreshes every 30 minutes
+        </div>
+    </div>
+</body>
+</html>
