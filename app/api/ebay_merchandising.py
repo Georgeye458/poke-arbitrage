@@ -45,6 +45,9 @@ class EbayMerchandisingAPI:
             "CONSUMER-ID": settings.ebay_app_id,
             "RESPONSE-DATA-FORMAT": "JSON",
             "REST-PAYLOAD": "",
+            # Prefer AU site/currency conversions (helps keep benchmark in AUD)
+            # Note: response items can still be global, but prices are converted.
+            "GLOBAL-ID": "EBAY-AU",
             "categoryId": self.POKEMON_CATEGORY_ID,
             "maxResults": max_results,
             "keywords": f"psa 10 {query}",
@@ -89,6 +92,17 @@ class EbayMerchandisingAPI:
         if not items:
             logger.warning("No items found in Merchandising API response")
             return None
+
+        # Filter to PSA 10-ish items (Merchandising results can be noisy)
+        psa_items = []
+        for item in items:
+            title = (item.get("title") or "").upper()
+            if "PSA 10" in title or "PSA10" in title:
+                psa_items.append(item)
+
+        # If we have any PSA-filtered items, only use those
+        if psa_items:
+            items = psa_items
         
         # Extract prices
         prices = []
@@ -152,10 +166,15 @@ class EbayMerchandisingAPI:
             # Handle different response formats
             if isinstance(price_data, dict):
                 value = price_data.get("__value__") or price_data.get("value")
+                currency = price_data.get("@currencyId") or price_data.get("currency")
             else:
                 value = price_data
+                currency = None
             
             if value:
+                # If currency is present and not AUD, skip to avoid mixing currencies.
+                if currency and str(currency).upper() != "AUD":
+                    return None
                 return float(value)
             
             return None
