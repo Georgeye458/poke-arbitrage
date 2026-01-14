@@ -455,6 +455,52 @@
     <script>
       const btn = document.getElementById('run-scan');
       const statusEl = document.getElementById('scan-status');
+      const LS_KEY = 'pokearb:lastScoreTaskId';
+
+      async function pollTask(taskId) {
+        if (!taskId) return;
+        statusEl.textContent = 'Scan running...';
+        const started = Date.now();
+
+        const tick = async () => {
+          try {
+            const res = await fetch(`/api/task-status/${taskId}`);
+            const data = await res.json();
+            const state = data?.state || 'UNKNOWN';
+
+            if (state === 'SUCCESS') {
+              const secs = Math.round((Date.now() - started) / 1000);
+              statusEl.textContent = `Scan completed (took ~${secs}s). Refreshing...`;
+              localStorage.removeItem(LS_KEY);
+              setTimeout(() => window.location.reload(), 1500);
+              return;
+            }
+            if (state === 'FAILURE') {
+              statusEl.textContent = 'Scan failed. Check logs and try again.';
+              btn.disabled = false;
+              btn.textContent = 'Run scan now';
+              localStorage.removeItem(LS_KEY);
+              return;
+            }
+
+            // PENDING / STARTED / RETRY
+            statusEl.textContent = `Scan running... (${state})`;
+            setTimeout(tick, 5000);
+          } catch (e) {
+            statusEl.textContent = 'Scan running...';
+            setTimeout(tick, 7000);
+          }
+        };
+
+        tick();
+      }
+
+      // Resume polling after reload if we have a task id
+      try {
+        const last = localStorage.getItem(LS_KEY);
+        if (last) pollTask(last);
+      } catch (e) {}
+
       if (btn) {
         btn.addEventListener('click', async () => {
           btn.disabled = true;
@@ -464,8 +510,10 @@
             const res = await fetch('/api/run-scan', { method: 'POST' });
             const data = await res.json();
             if (!res.ok) throw new Error(data?.detail || 'Failed to queue scan');
-            statusEl.textContent = 'Scan queued. Refresh this page in ~3 minutes to see updated opportunities.';
-            btn.textContent = 'Queued';
+            btn.textContent = 'Running...';
+            const scoreTaskId = data?.tasks?.identify_all_opportunities;
+            try { localStorage.setItem(LS_KEY, scoreTaskId); } catch (e) {}
+            pollTask(scoreTaskId);
           } catch (e) {
             statusEl.textContent = `Error: ${e.message || e}`;
             btn.disabled = false;

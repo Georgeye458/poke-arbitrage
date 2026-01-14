@@ -14,6 +14,7 @@ from app.config import settings
 from app.tasks.scrape_listings import scrape_all_listings
 from app.tasks.fetch_benchmarks import fetch_all_benchmarks
 from app.tasks.identify_opportunities import identify_all_opportunities
+from app.tasks.celery_app import celery_app
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -136,3 +137,17 @@ async def run_scan_now():
             "identify_all_opportunities": score.id,
         },
     }
+
+
+@router.get("/api/task-status/{task_id}")
+async def task_status(task_id: str):
+    """Poll a celery task state (used by the frontend to show scan completion)."""
+    res = celery_app.AsyncResult(task_id)
+    payload = {"task_id": task_id, "state": res.state, "ready": res.ready()}
+    if res.ready():
+        # result can be Exception-like; keep it JSON-safe best-effort
+        try:
+            payload["result"] = res.result
+        except Exception:
+            payload["result"] = None
+    return payload

@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # Destination context for shipping estimates (do not store full address)
     destination_country: str = "AU"
     destination_postcode: str = "2176"
+
+    # Browse filters
+    require_psa10_graded: bool = True
+    require_professional_grader_psa: bool = True
     
     # eBay API Endpoints
     ebay_api_base_url: str = "https://api.ebay.com"

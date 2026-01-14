@@ -56,6 +56,19 @@ class EbayBrowseAPI:
         # Build search parameters
         language_value = "English" if (language or "EN").upper() == "EN" else "Japanese"
 
+        aspect_parts = [
+            f"categoryId:{self.POKEMON_CATEGORY_ID}",
+            f"Language:{{{language_value}}}",
+        ]
+
+        # Prefer structured filters (aspects) over title parsing.
+        # Verified via fieldgroups=ASPECT_REFINEMENTS that these exist for 183454.
+        if settings.require_psa10_graded:
+            aspect_parts.append("Graded:{Yes}")
+            aspect_parts.append("Grade:{10}")
+        if settings.require_professional_grader_psa:
+            aspect_parts.append("Professional Grader:{Professional Sports Authenticator (PSA)}")
+
         params = {
             "q": f"psa 10 {query}",
             "category_ids": self.POKEMON_CATEGORY_ID,
@@ -63,7 +76,7 @@ class EbayBrowseAPI:
             "filter": "buyingOptions:{FIXED_PRICE}",
             # Best practice: use aspect_filter to separate EN vs JP
             # (Aspect names/values vary by category, but Language is common for cards.)
-            "aspect_filter": f"categoryId:{self.POKEMON_CATEGORY_ID},Language:{{{language_value}}}",
+            "aspect_filter": ",".join(aspect_parts),
             "sort": "price",
             "limit": min(limit, 200),
             "offset": offset,
