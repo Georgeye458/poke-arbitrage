@@ -388,13 +388,15 @@
                 By Price
             </a>
             <label class="sort-btn" style="cursor:default;">
-              Discount:
-              <select id="threshold" style="margin-left:0.5rem;background:transparent;color:inherit;border:1px solid var(--border-subtle);border-radius:6px;padding:0.25rem 0.5rem;">
-                <option value="0.90">10%</option>
-                <option value="0.85" selected>15%</option>
-                <option value="0.80">20%</option>
-                <option value="0.75">25%</option>
-                <option value="0.70">30%</option>
+              Min discount:
+              <input id="min-discount" type="range" min="0" max="50" step="5" value="15" style="margin-left:0.5rem;vertical-align:middle;">
+              <span id="min-discount-value" style="margin-left:0.5rem;">15%</span>
+            </label>
+            <label class="sort-btn" style="cursor:default;">
+              Mode:
+              <select id="listing-mode" style="margin-left:0.5rem;background:transparent;color:inherit;border:1px solid var(--border-subtle);border-radius:6px;padding:0.25rem 0.5rem;">
+                <option value="PSA10" selected>PSA 10 only</option>
+                <option value="ALL">All listings</option>
               </select>
             </label>
             <button id="run-scan" class="sort-btn" type="button">Run scan now</button>
@@ -465,9 +467,12 @@
     <script>
       const btn = document.getElementById('run-scan');
       const statusEl = document.getElementById('scan-status');
-      const thresholdEl = document.getElementById('threshold');
+      const discountEl = document.getElementById('min-discount');
+      const discountValueEl = document.getElementById('min-discount-value');
+      const modeEl = document.getElementById('listing-mode');
       const LS_KEY = 'pokearb:lastScanTasks';
-      const LS_THRESH = 'pokearb:arbitrageThreshold';
+      const LS_DISCOUNT = 'pokearb:minDiscountPct';
+      const LS_MODE = 'pokearb:listingMode';
 
       async function pollTask(taskId) {
         if (!taskId) return null;
@@ -500,8 +505,9 @@
                 ? `Benchmarks: ${b.stored || 0} stored, ${b.filtered || 0} filtered`
                 : 'Benchmarks: (pending)';
               const th = (r.arbitrage_threshold != null) ? Math.round((1 - r.arbitrage_threshold) * 100) : null;
-              const thMsg = (th != null) ? `Threshold: ${th}% off` : '';
-              const oppMsg = `Opportunities: ${r.opportunities_found || 0} found (checked ${r.listings_checked || 0} listings). ${thMsg}`;
+              const thMsg = (th != null) ? `Min discount: ${th}%` : '';
+              const modeMsg = (r.listing_mode) ? `Mode: ${r.listing_mode}` : '';
+              const oppMsg = `Opportunities: ${r.opportunities_found || 0} found (checked ${r.listings_checked || 0} listings). ${thMsg} ${modeMsg}`.trim();
 
               statusEl.textContent = `Scan completed (~${secs}s). ${listingsMsg}. ${benchMsg}. ${oppMsg}. Refreshing...`;
               localStorage.removeItem(LS_KEY);
@@ -534,14 +540,27 @@
         if (last) pollScan(JSON.parse(last));
       } catch (e) {}
 
-      // Load/save threshold selection
+      // Load/save discount + mode selection
       try {
-        const saved = localStorage.getItem(LS_THRESH);
-        if (saved && thresholdEl) thresholdEl.value = saved;
+        const savedDiscount = localStorage.getItem(LS_DISCOUNT);
+        if (savedDiscount && discountEl) discountEl.value = savedDiscount;
+        const savedMode = localStorage.getItem(LS_MODE);
+        if (savedMode && modeEl) modeEl.value = savedMode;
       } catch (e) {}
-      if (thresholdEl) {
-        thresholdEl.addEventListener('change', () => {
-          try { localStorage.setItem(LS_THRESH, thresholdEl.value); } catch (e) {}
+      const syncDiscountLabel = () => {
+        if (!discountEl || !discountValueEl) return;
+        discountValueEl.textContent = `${parseFloat(discountEl.value || '0')}%`;
+      };
+      syncDiscountLabel();
+      if (discountEl) {
+        discountEl.addEventListener('input', () => {
+          syncDiscountLabel();
+          try { localStorage.setItem(LS_DISCOUNT, discountEl.value); } catch (e) {}
+        });
+      }
+      if (modeEl) {
+        modeEl.addEventListener('change', () => {
+          try { localStorage.setItem(LS_MODE, modeEl.value); } catch (e) {}
         });
       }
 
@@ -551,11 +570,12 @@
           btn.textContent = 'Queuing...';
           statusEl.textContent = '';
           try {
-            const threshold = thresholdEl ? parseFloat(thresholdEl.value) : null;
+            const minDiscountPct = discountEl ? parseFloat(discountEl.value) : null;
+            const listingMode = modeEl ? modeEl.value : 'PSA10';
             const res = await fetch('/api/run-scan', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ arbitrage_threshold: threshold }),
+              body: JSON.stringify({ min_discount_pct: minDiscountPct, listing_mode: listingMode }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data?.detail || 'Failed to queue scan');

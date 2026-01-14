@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(bind=True, max_retries=3)
-def identify_all_opportunities(self, arbitrage_threshold: float = None):
+def identify_all_opportunities(self, arbitrage_threshold: float = None, listing_mode: str | None = None):
     """
     Task 3: Identify arbitrage opportunities.
     
@@ -24,7 +24,8 @@ def identify_all_opportunities(self, arbitrage_threshold: float = None):
     - If no market price exists (filtered out for being >$3k), ignore listing
     - If listing_price < (market_price * 0.85), create arbitrage record
     """
-    logger.info("Starting Task 3: Identify Arbitrage Opportunities")
+    listing_mode = (listing_mode or "PSA10").upper()
+    logger.info(f"Starting Task 3: Identify Arbitrage Opportunities (mode={listing_mode})")
     
     db = SessionLocal()
     try:
@@ -100,6 +101,7 @@ def identify_all_opportunities(self, arbitrage_threshold: float = None):
             "opportunities_found": opportunities_found,
             "listings_checked": listings_checked,
             "arbitrage_threshold": float(threshold),
+            "listing_mode": listing_mode,
         }
         
     except Exception as e:

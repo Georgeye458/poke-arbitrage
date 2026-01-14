@@ -21,10 +21,11 @@ class EbayBrowseAPI:
     # Pokemon Trading Cards category ID
     POKEMON_CATEGORY_ID = "183454"
     
-    async def search_psa10_listings(
+    async def search_listings(
         self,
         query: str,
         language: str = "EN",
+        mode: str = "PSA10",
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
@@ -53,6 +54,8 @@ class EbayBrowseAPI:
                 f"contextualLocation=country={settings.destination_country},zip={settings.destination_postcode}"
             )
         
+        mode = (mode or "PSA10").upper()
+
         # Build search parameters
         language_value = "English" if (language or "EN").upper() == "EN" else "Japanese"
 
@@ -61,16 +64,20 @@ class EbayBrowseAPI:
             f"Language:{{{language_value}}}",
         ]
 
-        # Prefer structured filters (aspects) over title parsing.
-        # Verified via fieldgroups=ASPECT_REFINEMENTS that these exist for 183454.
-        if settings.require_psa10_graded:
-            aspect_parts.append("Graded:{Yes}")
-            aspect_parts.append("Grade:{10}")
-        if settings.require_professional_grader_psa:
-            aspect_parts.append("Professional Grader:{Professional Sports Authenticator (PSA)}")
+        # Mode:
+        # - PSA10: strict PSA graded 10 via aspects
+        # - ALL: do not constrain by grade/grader (still keeps Language split)
+        if mode == "PSA10":
+            # Prefer structured filters (aspects) over title parsing.
+            # Verified via fieldgroups=ASPECT_REFINEMENTS that these exist for 183454.
+            if settings.require_psa10_graded:
+                aspect_parts.append("Graded:{Yes}")
+                aspect_parts.append("Grade:{10}")
+            if settings.require_professional_grader_psa:
+                aspect_parts.append("Professional Grader:{Professional Sports Authenticator (PSA)}")
 
         params = {
-            "q": f"psa 10 {query}",
+            "q": f"psa 10 {query}" if mode == "PSA10" else f"{query}",
             "category_ids": self.POKEMON_CATEGORY_ID,
             # PSA graded cards are often "USED" – do not constrain condition.
             "filter": "buyingOptions:{FIXED_PRICE}",
@@ -97,6 +104,22 @@ class EbayBrowseAPI:
                 raise Exception(f"Browse API request failed: {response.text}")
             
             return response.json()
+
+    async def search_psa10_listings(
+        self,
+        query: str,
+        language: str = "EN",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Backward-compatible wrapper (PSA10 mode)."""
+        return await self.search_listings(
+            query=query,
+            language=language,
+            mode="PSA10",
+            limit=limit,
+            offset=offset,
+        )
     
     def parse_listings(self, api_response: dict) -> list[dict]:
         """

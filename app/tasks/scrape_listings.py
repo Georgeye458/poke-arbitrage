@@ -23,7 +23,7 @@ def run_async(coro):
 
 
 @celery_app.task(bind=True, max_retries=3)
-def scrape_all_listings(self):
+def scrape_all_listings(self, listing_mode: str = "PSA10"):
     """
     Task 1: Scrape active Buy It Now listings for all search queries.
     
@@ -32,7 +32,8 @@ def scrape_all_listings(self):
     - Parses and stores listings in psa10_listings table
     - Updates last_seen_at for existing listings
     """
-    logger.info("Starting Task 1: Scrape Active Listings")
+    listing_mode = (listing_mode or "PSA10").upper()
+    logger.info(f"Starting Task 1: Scrape Active Listings (mode={listing_mode})")
     
     db = SessionLocal()
     try:
@@ -51,7 +52,7 @@ def scrape_all_listings(self):
         for query in queries:
             try:
                 listings_count, new_count, updated_count, removed_count = run_async(
-                    _scrape_query_listings(db, query)
+                    _scrape_query_listings(db, query, listing_mode=listing_mode)
                 )
                 total_listings += listings_count
                 new_listings += new_count
@@ -85,7 +86,7 @@ def scrape_all_listings(self):
         db.close()
 
 
-async def _scrape_query_listings(db, query: SearchQuery) -> tuple[int, int, int, int]:
+async def _scrape_query_listings(db, query: SearchQuery, listing_mode: str) -> tuple[int, int, int, int]:
     """Scrape listings for a single search query."""
     # Per-scan replacement semantics:
     # - snapshot previously-active listings
@@ -102,7 +103,11 @@ async def _scrape_query_listings(db, query: SearchQuery) -> tuple[int, int, int,
     ).update({"is_active": False}, synchronize_session=False)
 
     # Fetch listings from eBay
-    api_response = await ebay_browse.search_psa10_listings(query.query_text, language=query.language)
+    api_response = await ebay_browse.search_listings(
+        query=query.query_text,
+        language=query.language,
+        mode=listing_mode,
+    )
     listings = ebay_browse.parse_listings(api_response)
     
     new_count = 0

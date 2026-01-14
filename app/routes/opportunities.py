@@ -122,22 +122,37 @@ async def get_opportunities_json(
 
 
 class RunScanRequest(BaseModel):
-    arbitrage_threshold: float | None = Field(default=None, ge=0.01, le=0.99)
+    # UI-friendly: minimum discount percent (0..50). Example: 10 means "at least 10% off".
+    min_discount_pct: float | None = Field(default=None, ge=0.0, le=50.0)
+    # Backward compat: threshold multiplier. 0.85 means "15% off".
+    arbitrage_threshold: float | None = Field(default=None, ge=0.5, le=1.0)
+    # Mode: "PSA10" (strict) or "ALL" (no grade/grader constraints)
+    listing_mode: str | None = Field(default="PSA10")
 
 
 @router.post("/api/run-scan")
 async def run_scan_now(payload: RunScanRequest | None = None):
     """Trigger a manual scan run (scrape -> benchmarks -> score)."""
+    listing_mode = (payload.listing_mode if payload else "PSA10") or "PSA10"
+    listing_mode = listing_mode.upper()
+
     threshold = payload.arbitrage_threshold if payload else None
+    if payload and payload.min_discount_pct is not None:
+        # Convert min discount (%) -> multiplier threshold.
+        threshold = 1.0 - (float(payload.min_discount_pct) / 100.0)
     # Run sequentially via countdowns (simple + reliable)
-    scrape = scrape_all_listings.apply_async()
-    benchmarks = fetch_all_benchmarks.apply_async(countdown=75)
-    score = identify_all_opportunities.apply_async(kwargs={"arbitrage_threshold": threshold}, countdown=180)
+    scrape = scrape_all_listings.apply_async(kwargs={"listing_mode": listing_mode})
+    benchmarks = fetch_all_benchmarks.apply_async(kwargs={"listing_mode": listing_mode}, countdown=75)
+    score = identify_all_opportunities.apply_async(
+        kwargs={"arbitrage_threshold": threshold, "listing_mode": listing_mode},
+        countdown=180,
+    )
 
     return {
         "status": "queued",
         "queued_at": datetime.utcnow().isoformat(),
         "arbitrage_threshold": threshold,
+        "listing_mode": listing_mode,
         "tasks": {
             "scrape_all_listings": scrape.id,
             "fetch_all_benchmarks": benchmarks.id,

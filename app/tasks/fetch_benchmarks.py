@@ -24,7 +24,7 @@ def run_async(coro):
 
 
 @celery_app.task(bind=True, max_retries=3)
-def fetch_all_benchmarks(self):
+def fetch_all_benchmarks(self, listing_mode: str = "PSA10"):
     """
     Task 2: Fetch market value benchmarks for all search queries.
     
@@ -35,7 +35,8 @@ def fetch_all_benchmarks(self):
     
     This effectively prunes our watchlist dynamically.
     """
-    logger.info("Starting Task 2: Fetch Market Benchmarks")
+    listing_mode = (listing_mode or "PSA10").upper()
+    logger.info(f"Starting Task 2: Fetch Market Benchmarks (mode={listing_mode})")
     
     db = SessionLocal()
     try:
@@ -52,7 +53,7 @@ def fetch_all_benchmarks(self):
         
         for query in queries:
             try:
-                result = run_async(_fetch_query_benchmark(db, query))
+                result = run_async(_fetch_query_benchmark(db, query, listing_mode=listing_mode))
                 
                 if result == "stored":
                     stored_count += 1
@@ -85,12 +86,13 @@ def fetch_all_benchmarks(self):
         db.close()
 
 
-async def _fetch_query_benchmark(db, query: SearchQuery) -> str:
+async def _fetch_query_benchmark(db, query: SearchQuery, listing_mode: str) -> str:
     """Fetch benchmark for a single search query."""
     # Fetch from Merchandising API
     api_response = await ebay_merchandising.get_most_watched_items(
         query.query_text,
         language=query.language,
+        mode=listing_mode,
     )
     
     # Calculate benchmark with price filter

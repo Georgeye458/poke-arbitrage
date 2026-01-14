@@ -59,6 +59,7 @@ class EbayMerchandisingAPI:
         self,
         query: str,
         language: str = "EN",
+        mode: str = "PSA10",
         max_results: int = 5,
     ) -> dict:
         """
@@ -75,7 +76,9 @@ class EbayMerchandisingAPI:
         """
         # Merchandising API uses Application ID directly in params
         language = (language or "EN").upper()
-        keywords = f"pokemon psa 10 {query}"
+        mode = (mode or "PSA10").upper()
+
+        keywords = f"pokemon psa 10 {query}" if mode == "PSA10" else f"pokemon {query}"
         if language == "JP":
             keywords = f"{keywords} japanese"
 
