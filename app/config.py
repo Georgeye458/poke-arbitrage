@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     ebay_dev_id: str = ""
     ebay_redirect_uri: str = ""
     ebay_refresh_token: str = ""
+    # Windows/CLI-safe variant: store token with '^' encoded as '%5E'
+    ebay_refresh_token_urlenc: str = ""
     
     # eBay API Endpoints
     ebay_api_base_url: str = "https://api.ebay.com"

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
+from urllib.parse import unquote
 
 from app.config import settings
 
@@ -49,9 +50,15 @@ class EbayAuth:
             "Authorization": self._auth_header,
         }
         
+        refresh_token = (
+            unquote(settings.ebay_refresh_token_urlenc)
+            if settings.ebay_refresh_token_urlenc
+            else settings.ebay_refresh_token
+        )
+
         data = {
             "grant_type": "refresh_token",
-            "refresh_token": settings.ebay_refresh_token,
+            "refresh_token": refresh_token,
             "scope": "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/buy.browse",
         }
         
