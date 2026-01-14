@@ -32,6 +32,7 @@ class Bucket:
     label: str
     # query keywords used for discovery
     q: str
+    language: str = "JP"
     # optional extra aspect filters for refinement
     extra_aspects: list[str]
     # query_text template for persisted SearchQuery rows
@@ -43,6 +44,7 @@ BUCKETS: list[Bucket] = [
         key="hidden_fates_shiny_vault",
         label="Hidden Fates Shiny Vault",
         q="pokemon hidden fates shiny vault",
+        language="EN",
         extra_aspects=[],
         query_text_suffix="hidden fates shiny vault",
     ),
@@ -50,6 +52,7 @@ BUCKETS: list[Bucket] = [
         key="ultra_shiny_gx",
         label="Ultra Shiny GX (SM8b)",
         q="pokemon ultra shiny gx sm8b",
+        language="JP",
         extra_aspects=[],
         query_text_suffix="ultra shiny gx",
     ),
@@ -57,6 +60,7 @@ BUCKETS: list[Bucket] = [
         key="tag_team_gx",
         label="TAG TEAM GX",
         q="pokemon tag team gx",
+        language="JP",
         extra_aspects=[],
         query_text_suffix="tag team gx",
     ),
@@ -64,6 +68,7 @@ BUCKETS: list[Bucket] = [
         key="amazing_rare",
         label="Amazing Rare",
         q="pokemon amazing rare",
+        language="JP",
         extra_aspects=[],
         query_text_suffix="amazing rare",
     ),
@@ -71,6 +76,7 @@ BUCKETS: list[Bucket] = [
         key="skyridge_split_earth_holos",
         label="Skyridge / Split Earth holos",
         q="pokemon skyridge split earth holo",
+        language="JP",
         extra_aspects=[],
         query_text_suffix="skyridge split earth holo",
     ),
@@ -190,12 +196,45 @@ def upsert_queries(
 
 async def main():
     logging.basicConfig(level=logging.INFO)
-    language = "JP"
     top_n = 25
 
     total_created = 0
     for bucket in BUCKETS:
         logger.info("Expanding bucket: %s", bucket.label)
+        language = bucket.language
+
+        # Special handling: "Skyridge / Split Earth" is mixed EN/JP naming on eBay.
+        if bucket.key == "skyridge_split_earth_holos":
+            data_en = await fetch_refinements(
+                q="pokemon skyridge holo",
+                language="EN",
+                extra_aspects=[],
+            )
+            data_jp = await fetch_refinements(
+                q="pokemon split earth holo",
+                language="JP",
+                extra_aspects=[],
+            )
+
+            def extract_top(d: dict[str, Any]) -> list[tuple[str, int]]:
+                ref = d.get("refinement") or {}
+                dist = _aspect_distributions(ref)
+                cn = _find_aspect(dist, "Card Name")
+                if not cn:
+                    return []
+                return _top_values(cn, 200)
+
+            merged: dict[str, int] = {}
+            for name, cnt in extract_top(data_en) + extract_top(data_jp):
+                merged[name] = max(merged.get(name, 0), cnt)
+
+            merged_sorted = sorted(merged.items(), key=lambda t: t[1], reverse=True)[:top_n]
+            names = [n for (n, _) in merged_sorted]
+            created, already = upsert_queries(language="JP", bucket=bucket, card_names=names)
+            total_created += created
+            logger.info("Bucket %s: created=%s existing=%s", bucket.key, created, already)
+            continue
+
         data = await fetch_refinements(q=bucket.q, language=language, extra_aspects=bucket.extra_aspects)
         refinement = data.get("refinement") or {}
         dists = _aspect_distributions(refinement)
@@ -231,12 +270,33 @@ async def main():
 
         card_name_aspect = _find_aspect(dists, "Card Name")
         if not card_name_aspect:
+            # Fallback: if Set has a value that matches the bucket keywords, apply it and retry.
+            set_aspect = _find_aspect(dists, "Set")
+            if set_aspect:
+                set_vals = [n for (n, _) in _top_values(set_aspect, 200)]
+                wanted = None
+                for v in set_vals:
+                    if bucket.key == "hidden_fates_shiny_vault" and "HIDDEN FATES" in v.upper():
+                        wanted = v
+                        break
+                if wanted:
+                    logger.info("Retrying %s with Set:{%s}", bucket.key, wanted)
+                    data = await fetch_refinements(
+                        q=bucket.q, language=language, extra_aspects=[f"Set:{{{wanted}}}"]
+                    )
+                    refinement = data.get("refinement") or {}
+                    dists = _aspect_distributions(refinement)
+                    card_name_aspect = _find_aspect(dists, "Card Name")
+
+        if not card_name_aspect:
             logger.warning("No 'Card Name' aspect found for bucket %s; skipping", bucket.label)
             continue
 
         top = _top_values(card_name_aspect, top_n)
         names = [n for (n, _) in top]
-        created, already = upsert_queries(language=language, bucket=bucket, card_names=names)
+        # We store bucket expansions as JP queries by default, except Hidden Fates which is EN.
+        store_lang = "EN" if bucket.key == "hidden_fates_shiny_vault" else "JP"
+        created, already = upsert_queries(language=store_lang, bucket=bucket, card_names=names)
         total_created += created
         logger.info("Bucket %s: created=%s existing=%s", bucket.key, created, already)
 
