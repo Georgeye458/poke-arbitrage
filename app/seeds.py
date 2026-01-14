@@ -32,6 +32,49 @@ BASE_QUERIES = [
     ("machamp 1st edition", "Machamp 1st Edition"),
 ]
 
+# Extra targets from user list (seeded into both EN + JP streams; Browse language aspect_filter keeps them separated).
+EXTRA_QUERIES = [
+    # Base / Jungle / Fossil / Rocket / Neo
+    ("chansey base set", "Chansey Base Set"),
+    ("snorlax jungle", "Snorlax Jungle"),
+    ("wigglytuff jungle", "Wigglytuff Jungle"),
+    ("articuno fossil", "Articuno Fossil"),
+    ("zapdos fossil", "Zapdos Fossil"),
+    ("moltres fossil", "Moltres Fossil"),
+    ("dark blastoise team rocket", "Dark Blastoise (Team Rocket)"),
+    ("dark charizard team rocket", "Dark Charizard (Team Rocket)"),
+    ("typhlosion neo genesis", "Typhlosion Neo Genesis"),
+    ("feraligatr neo genesis", "Feraligatr Neo Genesis"),
+    ("meganium neo genesis", "Meganium Neo Genesis"),
+
+    # e-Card / Aquapolis-ish
+    ("tyranitar aquapolis", "Tyranitar Aquapolis"),
+    ("lugia aquapolis", "Lugia Aquapolis"),
+
+    # EX era
+    ("rayquaza ex ex dragon", "Rayquaza ex (EX Dragon)"),
+    ("latios ex", "Latios ex"),
+    ("latias ex", "Latias ex"),
+    ("rocket's mewtwo ex", "Rocket's Mewtwo ex"),
+    ("espeon ex unseen forces", "Espeon ex (Unseen Forces)"),
+    ("umbreon ex unseen forces", "Umbreon ex (Unseen Forces)"),
+
+    # DP / BW / XY / misc
+    ("charizard stormfront secret rare", "Charizard (Stormfront Secret Rare)"),
+    ("garchomp c lv.x supreme victors", "Garchomp C LV.X (Supreme Victors)"),
+    ("n full art trainer", "N (Full Art)"),
+    ("skyla full art trainer", "Skyla (Full Art)"),
+    ("bianca full art trainer", "Bianca (Full Art)"),
+    ("charizard plasma storm secret rare", "Charizard (Plasma Storm Secret Rare)"),
+    ("white kyurem ex boundaries crossed", "White Kyurem EX (Boundaries Crossed)"),
+    ("black kyurem ex boundaries crossed", "Black Kyurem EX (Boundaries Crossed)"),
+    ("pikachu full art promo", "Pikachu Full Art Promo"),
+    ("shining mew", "Shining Mew"),
+    ("shining jirachi", "Shining Jirachi"),
+]
+
+BASE_QUERIES.extend(EXTRA_QUERIES)
+
 # We track English and Japanese separately.
 LANGUAGES = ["EN", "JP"]
 
