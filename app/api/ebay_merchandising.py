@@ -50,7 +50,8 @@ class EbayMerchandisingAPI:
             "GLOBAL-ID": "EBAY-AU",
             "categoryId": self.POKEMON_CATEGORY_ID,
             "maxResults": max_results,
-            "keywords": f"psa 10 {query}",
+            # Add "pokemon" to reduce cross-TCG noise (e.g., Yu-Gi-Oh)
+            "keywords": f"pokemon psa 10 {query}",
         }
         
         async with httpx.AsyncClient() as client:
