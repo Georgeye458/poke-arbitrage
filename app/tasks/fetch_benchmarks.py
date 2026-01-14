@@ -88,12 +88,16 @@ def fetch_all_benchmarks(self):
 async def _fetch_query_benchmark(db, query: SearchQuery) -> str:
     """Fetch benchmark for a single search query."""
     # Fetch from Merchandising API
-    api_response = await ebay_merchandising.get_most_watched_items(query.query_text)
+    api_response = await ebay_merchandising.get_most_watched_items(
+        query.query_text,
+        language=query.language,
+    )
     
     # Calculate benchmark with price filter
     benchmark_data = ebay_merchandising.calculate_market_benchmark(
         api_response,
         price_ceiling=settings.price_ceiling_aud,
+        language=query.language,
     )
     
     if benchmark_data is None:

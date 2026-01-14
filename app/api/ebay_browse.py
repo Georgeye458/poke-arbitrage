@@ -24,6 +24,7 @@ class EbayBrowseAPI:
     async def search_psa10_listings(
         self,
         query: str,
+        language: str = "EN",
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
@@ -47,10 +48,15 @@ class EbayBrowseAPI:
         }
         
         # Build search parameters
+        language_value = "English" if (language or "EN").upper() == "EN" else "Japanese"
+
         params = {
             "q": f"psa 10 {query}",
             "category_ids": self.POKEMON_CATEGORY_ID,
             "filter": "conditions:{NEW},buyingOptions:{FIXED_PRICE}",
+            # Best practice: use aspect_filter to separate EN vs JP
+            # (Aspect names/values vary by category, but Language is common for cards.)
+            "aspect_filter": f"categoryId:{self.POKEMON_CATEGORY_ID},Language:{{{language_value}}}",
             "sort": "price",
             "limit": min(limit, 200),
             "offset": offset,

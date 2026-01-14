@@ -6,8 +6,8 @@ from app.models import SearchQuery
 
 logger = logging.getLogger(__name__)
 
-# Initial PSA 10 Pokemon card search queries (22 cards)
-INITIAL_QUERIES = [
+# Base PSA 10 Pokemon card search queries (22 cards)
+BASE_QUERIES = [
     ("charizard base set", "Charizard Base Set"),
     ("charizard 1st edition base set", "Charizard 1st Edition Base Set"),
     ("blastoise base set", "Blastoise Base Set"),
@@ -32,28 +32,38 @@ INITIAL_QUERIES = [
     ("machamp 1st edition", "Machamp 1st Edition"),
 ]
 
+# We track English and Japanese separately.
+LANGUAGES = ["EN", "JP"]
+
 
 def seed_search_queries():
     """Seed the database with initial search queries."""
     db = SessionLocal()
     try:
-        # Check if already seeded
-        existing_count = db.query(SearchQuery).count()
-        if existing_count > 0:
-            logger.info(f"Database already has {existing_count} search queries, skipping seed")
-            return
-        
-        # Insert initial queries
-        for query_text, card_name in INITIAL_QUERIES:
-            query = SearchQuery(
-                query_text=query_text,
-                card_name=card_name,
-                is_active=True,
-            )
-            db.add(query)
-        
+        created = 0
+
+        for query_text, card_name in BASE_QUERIES:
+            for language in LANGUAGES:
+                exists = (
+                    db.query(SearchQuery)
+                    .filter(SearchQuery.query_text == query_text)
+                    .filter(SearchQuery.language == language)
+                    .first()
+                )
+                if exists:
+                    continue
+
+                query = SearchQuery(
+                    query_text=query_text,
+                    card_name=card_name,
+                    language=language,
+                    is_active=True,
+                )
+                db.add(query)
+                created += 1
+
         db.commit()
-        logger.info(f"Seeded {len(INITIAL_QUERIES)} search queries")
+        logger.info(f"Seeded/ensured {created} search queries (EN+JP)")
         
     except Exception as e:
         logger.error(f"Failed to seed search queries: {e}")

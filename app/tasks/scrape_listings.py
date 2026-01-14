@@ -85,7 +85,7 @@ def scrape_all_listings(self):
 async def _scrape_query_listings(db, query: SearchQuery) -> tuple[int, int, int]:
     """Scrape listings for a single search query."""
     # Fetch listings from eBay
-    api_response = await ebay_browse.search_psa10_listings(query.query_text)
+    api_response = await ebay_browse.search_psa10_listings(query.query_text, language=query.language)
     listings = ebay_browse.parse_listings(api_response)
     
     new_count = 0

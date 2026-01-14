@@ -24,6 +24,7 @@ class EbayMerchandisingAPI:
     async def get_most_watched_items(
         self,
         query: str,
+        language: str = "EN",
         max_results: int = 5,
     ) -> dict:
         """
@@ -39,6 +40,11 @@ class EbayMerchandisingAPI:
             Dict containing watched item results
         """
         # Merchandising API uses Application ID directly in params
+        language = (language or "EN").upper()
+        keywords = f"pokemon psa 10 {query}"
+        if language == "JP":
+            keywords = f"{keywords} japanese"
+
         params = {
             "OPERATION-NAME": "getMostWatchedItems",
             "SERVICE-VERSION": "1.1.0",
@@ -50,8 +56,7 @@ class EbayMerchandisingAPI:
             "GLOBAL-ID": "EBAY-AU",
             "categoryId": self.POKEMON_CATEGORY_ID,
             "maxResults": max_results,
-            # Add "pokemon" to reduce cross-TCG noise (e.g., Yu-Gi-Oh)
-            "keywords": f"pokemon psa 10 {query}",
+            "keywords": keywords,
         }
         
         async with httpx.AsyncClient() as client:
@@ -71,6 +76,7 @@ class EbayMerchandisingAPI:
         self,
         api_response: dict,
         price_ceiling: float = None,
+        language: str = "EN",
     ) -> Optional[dict]:
         """
         Calculate market benchmark from Merchandising API response.
@@ -94,6 +100,8 @@ class EbayMerchandisingAPI:
             logger.warning("No items found in Merchandising API response")
             return None
 
+        language = (language or "EN").upper()
+
         # Filter to PSA 10-ish items (Merchandising results can be noisy)
         psa_items = []
         for item in items:
@@ -104,6 +112,22 @@ class EbayMerchandisingAPI:
         # If we have any PSA-filtered items, only use those
         if psa_items:
             items = psa_items
+
+        # Language split: keep Japanese-only in JP stream; exclude JP signals from EN stream.
+        def is_jp_title(t: str) -> bool:
+            t = (t or "").upper()
+            return (
+                "JAPANESE" in t
+                or "JPN" in t
+                or " JP " in f" {t} "
+                or "JP-" in t
+                or "JP_" in t
+            )
+
+        if language == "JP":
+            items = [it for it in items if is_jp_title(it.get("title"))]
+        else:
+            items = [it for it in items if not is_jp_title(it.get("title"))]
         
         # Extract prices
         prices = []
