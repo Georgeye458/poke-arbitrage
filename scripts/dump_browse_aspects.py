@@ -16,7 +16,7 @@ async def main():
     }
 
     params = {
-        "q": "psa 10 charizard base set",
+        "q": "psa 10 pokemon card",
         "category_ids": "183454",
         "filter": "buyingOptions:{FIXED_PRICE}",
         "aspect_filter": "categoryId:183454,Language:{English}",
@@ -34,7 +34,13 @@ async def main():
         )
         print("status", resp.status_code)
         data = resp.json()
-        print(json.dumps(data.get("refinement", {}), indent=2)[:20000])
+        refinement = data.get("refinement", {}) or {}
+        aspects = refinement.get("aspectDistributions") or []
+        names = [a.get("localizedAspectName") or a.get("aspectName") for a in aspects]
+        print("aspect_names", names)
+        # Print any aspect names that look grading-related
+        grade_like = [n for n in names if n and ("GRAD" in n.upper() or "GRADE" in n.upper())]
+        print("grade_like", grade_like)
 
 
 if __name__ == "__main__":
