@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(bind=True, max_retries=3)
-def identify_all_opportunities(self):
+def identify_all_opportunities(self, arbitrage_threshold: float = None):
     """
     Task 3: Identify arbitrage opportunities.
     
@@ -37,6 +37,13 @@ def identify_all_opportunities(self):
         
         opportunities_found = 0
         listings_checked = 0
+
+        # Allow per-run threshold override from the UI (falls back to config default).
+        threshold = (
+            Decimal(str(arbitrage_threshold))
+            if arbitrage_threshold is not None
+            else Decimal(str(settings.arbitrage_threshold))
+        )
         
         for query in queries:
             # Get latest benchmark for this query (within last 2 hours)
@@ -52,7 +59,7 @@ def identify_all_opportunities(self):
                 continue
             
             market_price = latest_benchmark.market_price
-            threshold_price = market_price * Decimal(str(settings.arbitrage_threshold))
+            threshold_price = market_price * threshold
             
             # Get recent listings for this query (seen in last 2 hours)
             listings = db.query(PSA10Listing).filter(
@@ -92,6 +99,7 @@ def identify_all_opportunities(self):
             "status": "success",
             "opportunities_found": opportunities_found,
             "listings_checked": listings_checked,
+            "arbitrage_threshold": float(threshold),
         }
         
     except Exception as e:

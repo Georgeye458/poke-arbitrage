@@ -387,6 +387,16 @@
             <a href="?sort=price&active_only={{ active_only }}" class="sort-btn {{ 'active' if sort == 'price' else '' }}">
                 By Price
             </a>
+            <label class="sort-btn" style="cursor:default;">
+              Discount:
+              <select id="threshold" style="margin-left:0.5rem;background:transparent;color:inherit;border:1px solid var(--border-subtle);border-radius:6px;padding:0.25rem 0.5rem;">
+                <option value="0.90">10%</option>
+                <option value="0.85" selected>15%</option>
+                <option value="0.80">20%</option>
+                <option value="0.75">25%</option>
+                <option value="0.70">30%</option>
+              </select>
+            </label>
             <button id="run-scan" class="sort-btn" type="button">Run scan now</button>
         </div>
         <div id="scan-status" style="text-align:center;color:var(--text-secondary);margin:-0.5rem 0 1.5rem 0;"></div>
@@ -455,7 +465,9 @@
     <script>
       const btn = document.getElementById('run-scan');
       const statusEl = document.getElementById('scan-status');
+      const thresholdEl = document.getElementById('threshold');
       const LS_KEY = 'pokearb:lastScanTasks';
+      const LS_THRESH = 'pokearb:arbitrageThreshold';
 
       async function pollTask(taskId) {
         if (!taskId) return null;
@@ -487,7 +499,9 @@
               const benchMsg = (bench && bench.state === 'SUCCESS')
                 ? `Benchmarks: ${b.stored || 0} stored, ${b.filtered || 0} filtered`
                 : 'Benchmarks: (pending)';
-              const oppMsg = `Opportunities: ${r.opportunities_found || 0} found (checked ${r.listings_checked || 0} listings)`;
+              const th = (r.arbitrage_threshold != null) ? Math.round((1 - r.arbitrage_threshold) * 100) : null;
+              const thMsg = (th != null) ? `Threshold: ${th}% off` : '';
+              const oppMsg = `Opportunities: ${r.opportunities_found || 0} found (checked ${r.listings_checked || 0} listings). ${thMsg}`;
 
               statusEl.textContent = `Scan completed (~${secs}s). ${listingsMsg}. ${benchMsg}. ${oppMsg}. Refreshing...`;
               localStorage.removeItem(LS_KEY);
@@ -520,13 +534,29 @@
         if (last) pollScan(JSON.parse(last));
       } catch (e) {}
 
+      // Load/save threshold selection
+      try {
+        const saved = localStorage.getItem(LS_THRESH);
+        if (saved && thresholdEl) thresholdEl.value = saved;
+      } catch (e) {}
+      if (thresholdEl) {
+        thresholdEl.addEventListener('change', () => {
+          try { localStorage.setItem(LS_THRESH, thresholdEl.value); } catch (e) {}
+        });
+      }
+
       if (btn) {
         btn.addEventListener('click', async () => {
           btn.disabled = true;
           btn.textContent = 'Queuing...';
           statusEl.textContent = '';
           try {
-            const res = await fetch('/api/run-scan', { method: 'POST' });
+            const threshold = thresholdEl ? parseFloat(thresholdEl.value) : null;
+            const res = await fetch('/api/run-scan', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ arbitrage_threshold: threshold }),
+            });
             const data = await res.json();
             if (!res.ok) throw new Error(data?.detail || 'Failed to queue scan');
             btn.textContent = 'Running...';

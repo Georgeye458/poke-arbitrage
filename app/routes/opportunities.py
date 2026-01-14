@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -121,16 +122,23 @@ async def get_opportunities_json(
 
 
 @router.post("/api/run-scan")
-async def run_scan_now():
+class RunScanRequest(BaseModel):
+    arbitrage_threshold: float | None = Field(default=None, ge=0.01, le=0.99)
+
+
+@router.post("/api/run-scan")
+async def run_scan_now(payload: RunScanRequest | None = None):
     """Trigger a manual scan run (scrape -> benchmarks -> score)."""
+    threshold = payload.arbitrage_threshold if payload else None
     # Run sequentially via countdowns (simple + reliable)
     scrape = scrape_all_listings.apply_async()
     benchmarks = fetch_all_benchmarks.apply_async(countdown=75)
-    score = identify_all_opportunities.apply_async(countdown=180)
+    score = identify_all_opportunities.apply_async(kwargs={"arbitrage_threshold": threshold}, countdown=180)
 
     return {
         "status": "queued",
         "queued_at": datetime.utcnow().isoformat(),
+        "arbitrage_threshold": threshold,
         "tasks": {
             "scrape_all_listings": scrape.id,
             "fetch_all_benchmarks": benchmarks.id,
