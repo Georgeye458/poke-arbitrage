@@ -32,11 +32,11 @@ class Bucket:
     label: str
     # query keywords used for discovery
     q: str
-    language: str = "JP"
     # optional extra aspect filters for refinement
     extra_aspects: list[str]
     # query_text template for persisted SearchQuery rows
     query_text_suffix: str
+    language: str = "JP"
 
 
 BUCKETS: list[Bucket] = [
