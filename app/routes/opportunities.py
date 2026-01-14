@@ -121,7 +121,6 @@ async def get_opportunities_json(
     }
 
 
-@router.post("/api/run-scan")
 class RunScanRequest(BaseModel):
     arbitrage_threshold: float | None = Field(default=None, ge=0.01, le=0.99)
 
