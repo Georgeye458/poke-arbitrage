@@ -1,6 +1,7 @@
 """eBay Merchandising API client for market benchmark pricing."""
 
 import logging
+import time
 from decimal import Decimal
 from typing import Optional
 
@@ -10,6 +11,39 @@ from app.config import settings
 from app.api.ebay_auth import ebay_auth
 
 logger = logging.getLogger(__name__)
+
+_FX_CACHE: dict[tuple[str, str], tuple[float, float]] = {}
+_FX_TTL_SECONDS = 60 * 60 * 12  # 12 hours
+
+
+def _fx_rate(base: str, quote: str) -> Optional[float]:
+    """Fetch FX rate base->quote, cached. Returns None on failure."""
+    base = (base or "").upper()
+    quote = (quote or "").upper()
+    if not base or not quote or base == quote:
+        return 1.0
+
+    key = (base, quote)
+    now = time.time()
+    cached = _FX_CACHE.get(key)
+    if cached and (now - cached[0]) < _FX_TTL_SECONDS:
+        return cached[1]
+
+    try:
+        # Free endpoint (no key). Example: https://api.exchangerate.host/latest?base=USD&symbols=AUD
+        resp = httpx.get(
+            "https://api.exchangerate.host/latest",
+            params={"base": base, "symbols": quote},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        rate = float(data["rates"][quote])
+        _FX_CACHE[key] = (now, rate)
+        return rate
+    except Exception as e:
+        logger.warning(f"FX conversion failed {base}->{quote}: {e}")
+        return None
 
 
 class EbayMerchandisingAPI:
@@ -176,7 +210,7 @@ class EbayMerchandisingAPI:
             return []
     
     def _extract_price(self, item: dict) -> Optional[float]:
-        """Extract price from a single item."""
+        """Extract price from a single item and return AUD."""
         try:
             # Get current price
             buy_it_now = item.get("buyItNowPrice", {})
@@ -197,10 +231,21 @@ class EbayMerchandisingAPI:
                 currency = None
             
             if value:
-                # If currency is present and not AUD, skip to avoid mixing currencies.
-                if currency and str(currency).upper() != "AUD":
-                    return None
-                return float(value)
+                amount = float(value)
+                cur = str(currency).upper() if currency else "AUD"
+
+                # Prefer that Merchandising already converts to AUD via GLOBAL-ID=EBAY-AU.
+                if cur == "AUD":
+                    return amount
+
+                rate = _fx_rate(cur, "AUD")
+                if rate is not None:
+                    return amount * rate
+
+                # If FX fails, still return the raw amount (best-effort per requirements)
+                # This can distort the $3k ceiling, so we log.
+                logger.warning(f"Using unconverted amount={amount} currency={cur} (FX unavailable)")
+                return amount
             
             return None
         except (ValueError, TypeError) as e:

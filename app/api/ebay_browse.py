@@ -53,7 +53,8 @@ class EbayBrowseAPI:
         params = {
             "q": f"psa 10 {query}",
             "category_ids": self.POKEMON_CATEGORY_ID,
-            "filter": "conditions:{NEW},buyingOptions:{FIXED_PRICE}",
+            # PSA graded cards are often "USED" – do not constrain condition.
+            "filter": "buyingOptions:{FIXED_PRICE}",
             # Best practice: use aspect_filter to separate EN vs JP
             # (Aspect names/values vary by category, but Language is common for cards.)
             "aspect_filter": f"categoryId:{self.POKEMON_CATEGORY_ID},Language:{{{language_value}}}",
