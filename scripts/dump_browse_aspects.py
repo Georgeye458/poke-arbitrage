@@ -38,9 +38,14 @@ async def main():
         aspects = refinement.get("aspectDistributions") or []
         names = [a.get("localizedAspectName") or a.get("aspectName") for a in aspects]
         print("aspect_names", names)
-        # Print any aspect names that look grading-related
-        grade_like = [n for n in names if n and ("GRAD" in n.upper() or "GRADE" in n.upper())]
-        print("grade_like", grade_like)
+
+        want = {"Graded", "Grade", "Professional Grader"}
+        for a in aspects:
+            name = a.get("localizedAspectName") or a.get("aspectName")
+            if name in want:
+                vals = a.get("aspectValueDistributions") or []
+                top = [v.get("localizedAspectValue") for v in vals[:30]]
+                print(f\"{name}_values\", top)
 
 
 if __name__ == "__main__":
