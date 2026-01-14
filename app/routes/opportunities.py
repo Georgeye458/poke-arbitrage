@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import ArbitrageOpportunity
+from app.config import settings
 from app.tasks.scrape_listings import scrape_all_listings
 from app.tasks.fetch_benchmarks import fetch_all_benchmarks
 from app.tasks.identify_opportunities import identify_all_opportunities
@@ -59,6 +60,7 @@ async def view_opportunities(
             "active_only": active_only,
             "count": len(opportunities),
             "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+            "destination_postcode": settings.destination_postcode,
         },
     )
 
@@ -102,6 +104,7 @@ async def get_opportunities_json(
                 "card_name": opp.card_name,
                 "listing_title": opp.listing_title,
                 "listing_price": float(opp.listing_price),
+                "shipping_cost": float(opp.shipping_cost) if opp.shipping_cost is not None else None,
                 "market_price": float(opp.market_price),
                 "discount_percentage": float(opp.discount_percentage),
                 "potential_profit": float(opp.potential_profit),

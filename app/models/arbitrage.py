@@ -25,6 +25,7 @@ class ArbitrageOpportunity(Base):
     
     # Price comparison
     listing_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    shipping_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=True)
     market_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     discount_percentage: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     potential_profit: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)

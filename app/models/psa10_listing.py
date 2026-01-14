@@ -20,6 +20,7 @@ class PSA10Listing(Base):
     ebay_item_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     price_aud: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    shipping_cost_aud: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=True)
     original_currency: Mapped[str] = mapped_column(String(10), default="AUD")
     original_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=True)
     

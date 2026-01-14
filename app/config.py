@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     ebay_refresh_token: str = ""
     # Windows/CLI-safe variant: store token with '^' encoded as '%5E'
     ebay_refresh_token_urlenc: str = ""
+
+    # Destination context for shipping estimates (do not store full address)
+    destination_country: str = "AU"
+    destination_postcode: str = "2176"
     
     # eBay API Endpoints
     ebay_api_base_url: str = "https://api.ebay.com"

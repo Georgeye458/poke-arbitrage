@@ -46,6 +46,12 @@ class EbayBrowseAPI:
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_AU",  # Australian marketplace
             "Content-Type": "application/json",
         }
+
+        # Provide buyer location context for shipping estimates (postcode only).
+        if settings.destination_country and settings.destination_postcode:
+            headers["X-EBAY-C-ENDUSERCTX"] = (
+                f"contextualLocation=country={settings.destination_country},zip={settings.destination_postcode}"
+            )
         
         # Build search parameters
         language_value = "English" if (language or "EN").upper() == "EN" else "Japanese"
@@ -124,6 +130,23 @@ class EbayBrowseAPI:
         # Get seller info
         seller = item.get("seller", {})
         
+        # Shipping cost (best-effort)
+        shipping_cost_aud = None
+        shipping_options = item.get("shippingOptions") or []
+        if isinstance(shipping_options, list) and shipping_options:
+            ship_cost = (shipping_options[0] or {}).get("shippingCost") or {}
+            try:
+                ship_val = ship_cost.get("value")
+                ship_cur = (ship_cost.get("currency") or "AUD").upper()
+                if ship_val is not None:
+                    # With EBAY_AU marketplace + enduserctx, this is typically AUD.
+                    shipping_cost_aud = Decimal(str(ship_val))
+                    # If currency isn't AUD, we still store the numeric (treated as AUD best-effort).
+                    if ship_cur != "AUD":
+                        logger.debug(f"Non-AUD shipping currency={ship_cur} for item {item.get('itemId')}")
+            except Exception:
+                shipping_cost_aud = None
+
         # Get image
         image = item.get("image", {})
         thumbnail = item.get("thumbnailImages", [{}])[0] if item.get("thumbnailImages") else {}
@@ -134,6 +157,7 @@ class EbayBrowseAPI:
             "price_aud": price_aud,
             "original_currency": price_currency,
             "original_price": Decimal(str(price_value)),
+            "shipping_cost_aud": shipping_cost_aud,
             "seller_username": seller.get("username"),
             "seller_feedback_score": seller.get("feedbackScore"),
             "item_url": item.get("itemWebUrl", ""),

@@ -64,15 +64,17 @@ def identify_all_opportunities(self):
                 listings_checked += 1
                 
                 # Check for arbitrage opportunity
-                if listing.price_aud < threshold_price:
+                shipping = listing.shipping_cost_aud or Decimal("0")
+                total_price = listing.price_aud + shipping
+                if total_price < threshold_price:
                     opportunity = _create_or_update_opportunity(
-                        db, query, listing, market_price
+                        db, query, listing, market_price, total_price, shipping
                     )
                     if opportunity:
                         opportunities_found += 1
                         logger.info(
                             f"Opportunity found: {listing.title[:50]}... "
-                            f"${listing.price_aud} vs ${market_price} market"
+                            f"${total_price} (incl ship) vs ${market_price} market"
                         )
         
         # Mark old opportunities as inactive
@@ -103,11 +105,13 @@ def _create_or_update_opportunity(
     query: SearchQuery,
     listing: PSA10Listing,
     market_price: Decimal,
+    total_price: Decimal,
+    shipping_cost: Decimal,
 ) -> ArbitrageOpportunity:
     """Create or update an arbitrage opportunity."""
     # Calculate discount and profit
-    discount = ((market_price - listing.price_aud) / market_price) * 100
-    profit = market_price - listing.price_aud
+    discount = ((market_price - total_price) / market_price) * 100
+    profit = market_price - total_price
     
     # Check if opportunity already exists
     existing = db.query(ArbitrageOpportunity).filter(
@@ -117,7 +121,8 @@ def _create_or_update_opportunity(
     
     if existing:
         # Update existing opportunity
-        existing.listing_price = listing.price_aud
+        existing.listing_price = total_price
+        existing.shipping_cost = shipping_cost
         existing.market_price = market_price
         existing.discount_percentage = discount
         existing.potential_profit = profit
@@ -130,7 +135,8 @@ def _create_or_update_opportunity(
         search_query_id=query.id,
         card_name=query.card_name,
         listing_title=listing.title,
-        listing_price=listing.price_aud,
+        listing_price=total_price,
+        shipping_cost=shipping_cost,
         market_price=market_price,
         discount_percentage=discount,
         potential_profit=profit,

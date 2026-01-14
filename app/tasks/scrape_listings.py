@@ -105,6 +105,7 @@ async def _scrape_query_listings(db, query: SearchQuery) -> tuple[int, int, int]
             # Update last_seen_at
             existing.last_seen_at = datetime.utcnow()
             existing.price_aud = listing_data["price_aud"]
+            existing.shipping_cost_aud = listing_data.get("shipping_cost_aud")
             updated_count += 1
         else:
             # Create new listing

@@ -409,7 +409,7 @@
 
                     <div class="price-comparison">
                         <div class="price-box">
-                            <div class="price-label">Listing</div>
+                            <div class="price-label">Listing (incl ship)</div>
                             <div class="price-value listing">${{ "%.2f"|format(opp.listing_price) }}</div>
                         </div>
                         <div class="price-arrow">→</div>
@@ -418,6 +418,10 @@
                             <div class="price-value market">${{ "%.2f"|format(opp.market_price) }}</div>
                         </div>
                     </div>
+
+                    {% if opp.shipping_cost is not none and opp.shipping_cost > 0 %}
+                    <div class="seller-info">Shipping est: ${{ "%.2f"|format(opp.shipping_cost) }} (to AU {{ destination_postcode }})</div>
+                    {% endif %}
 
                     <div class="profit-row">
                         <span class="profit-label">Potential Profit</span>
