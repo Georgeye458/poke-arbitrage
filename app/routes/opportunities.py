@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import ArbitrageOpportunity
+from app.tasks.scrape_listings import scrape_all_listings
+from app.tasks.fetch_benchmarks import fetch_all_benchmarks
+from app.tasks.identify_opportunities import identify_all_opportunities
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -110,4 +113,23 @@ async def get_opportunities_json(
             }
             for opp in opportunities
         ],
+    }
+
+
+@router.post("/api/run-scan")
+async def run_scan_now():
+    """Trigger a manual scan run (scrape -> benchmarks -> score)."""
+    # Run sequentially via countdowns (simple + reliable)
+    scrape = scrape_all_listings.apply_async()
+    benchmarks = fetch_all_benchmarks.apply_async(countdown=75)
+    score = identify_all_opportunities.apply_async(countdown=180)
+
+    return {
+        "status": "queued",
+        "queued_at": datetime.utcnow().isoformat(),
+        "tasks": {
+            "scrape_all_listings": scrape.id,
+            "fetch_all_benchmarks": benchmarks.id,
+            "identify_all_opportunities": score.id,
+        },
     }

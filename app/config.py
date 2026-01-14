@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     
     # Task scheduling interval (seconds)
     task_interval_seconds: int = 1800  # 30 minutes
+    scheduler_enabled: bool = True
     
     class Config:
         env_file = ".env"

@@ -387,7 +387,9 @@
             <a href="?sort=price&active_only={{ active_only }}" class="sort-btn {{ 'active' if sort == 'price' else '' }}">
                 By Price
             </a>
+            <button id="run-scan" class="sort-btn" type="button">Run scan now</button>
         </div>
+        <div id="scan-status" style="text-align:center;color:var(--text-secondary);margin:-0.5rem 0 1.5rem 0;"></div>
 
         {% if opportunities %}
         <div class="opportunities-grid">
@@ -445,5 +447,28 @@
             Last updated: {{ updated_at }} • Refreshes every 30 minutes
         </div>
     </div>
+
+    <script>
+      const btn = document.getElementById('run-scan');
+      const statusEl = document.getElementById('scan-status');
+      if (btn) {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          btn.textContent = 'Queuing...';
+          statusEl.textContent = '';
+          try {
+            const res = await fetch('/api/run-scan', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data?.detail || 'Failed to queue scan');
+            statusEl.textContent = 'Scan queued. Refresh this page in ~3 minutes to see updated opportunities.';
+            btn.textContent = 'Queued';
+          } catch (e) {
+            statusEl.textContent = `Error: ${e.message || e}`;
+            btn.disabled = false;
+            btn.textContent = 'Run scan now';
+          }
+        });
+      }
+    </script>
 </body>
 </html>
