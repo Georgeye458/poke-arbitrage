@@ -45,7 +45,7 @@ async def main():
             if name in want:
                 vals = a.get("aspectValueDistributions") or []
                 top = [v.get("localizedAspectValue") for v in vals[:30]]
-                print(f\"{name}_values\", top)
+                print(f"{name}_values", top)
 
 
 if __name__ == "__main__":
