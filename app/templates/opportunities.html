@@ -448,29 +448,48 @@
         {% endif %}
 
         <div class="update-time">
-            Last updated: {{ updated_at }} • Refreshes every 30 minutes
+            Last updated: {{ updated_at }} • Click "Run scan now" to refresh
         </div>
     </div>
 
     <script>
       const btn = document.getElementById('run-scan');
       const statusEl = document.getElementById('scan-status');
-      const LS_KEY = 'pokearb:lastScoreTaskId';
+      const LS_KEY = 'pokearb:lastScanTasks';
 
       async function pollTask(taskId) {
-        if (!taskId) return;
+        if (!taskId) return null;
+        const res = await fetch(`/api/task-status/${taskId}`);
+        return await res.json();
+      }
+
+      async function pollScan(tasks) {
+        if (!tasks?.identify_all_opportunities) return;
         statusEl.textContent = 'Scan running...';
         const started = Date.now();
 
         const tick = async () => {
           try {
-            const res = await fetch(`/api/task-status/${taskId}`);
-            const data = await res.json();
-            const state = data?.state || 'UNKNOWN';
+            const score = await pollTask(tasks.identify_all_opportunities);
+            const state = score?.state || 'UNKNOWN';
 
             if (state === 'SUCCESS') {
               const secs = Math.round((Date.now() - started) / 1000);
-              statusEl.textContent = `Scan completed (took ~${secs}s). Refreshing...`;
+              const scrape = tasks.scrape_all_listings ? await pollTask(tasks.scrape_all_listings) : null;
+              const bench = tasks.fetch_all_benchmarks ? await pollTask(tasks.fetch_all_benchmarks) : null;
+              const s = scrape?.result || {};
+              const b = bench?.result || {};
+              const r = score?.result || {};
+
+              const listingsMsg = (scrape && scrape.state === 'SUCCESS')
+                ? `Listings: +${s.new_listings || 0} new, ${s.updated_listings || 0} updated, ${s.removed_listings || 0} removed`
+                : 'Listings: (pending)';
+              const benchMsg = (bench && bench.state === 'SUCCESS')
+                ? `Benchmarks: ${b.stored || 0} stored, ${b.filtered || 0} filtered`
+                : 'Benchmarks: (pending)';
+              const oppMsg = `Opportunities: ${r.opportunities_found || 0} found (checked ${r.listings_checked || 0} listings)`;
+
+              statusEl.textContent = `Scan completed (~${secs}s). ${listingsMsg}. ${benchMsg}. ${oppMsg}. Refreshing...`;
               localStorage.removeItem(LS_KEY);
               setTimeout(() => window.location.reload(), 1500);
               return;
@@ -498,7 +517,7 @@
       // Resume polling after reload if we have a task id
       try {
         const last = localStorage.getItem(LS_KEY);
-        if (last) pollTask(last);
+        if (last) pollScan(JSON.parse(last));
       } catch (e) {}
 
       if (btn) {
@@ -511,9 +530,9 @@
             const data = await res.json();
             if (!res.ok) throw new Error(data?.detail || 'Failed to queue scan');
             btn.textContent = 'Running...';
-            const scoreTaskId = data?.tasks?.identify_all_opportunities;
-            try { localStorage.setItem(LS_KEY, scoreTaskId); } catch (e) {}
-            pollTask(scoreTaskId);
+            const tasks = data?.tasks || {};
+            try { localStorage.setItem(LS_KEY, JSON.stringify(tasks)); } catch (e) {}
+            pollScan(tasks);
           } catch (e) {
             statusEl.textContent = `Error: ${e.message || e}`;
             btn.disabled = false;

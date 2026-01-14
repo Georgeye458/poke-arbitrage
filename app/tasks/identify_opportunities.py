@@ -57,6 +57,7 @@ def identify_all_opportunities(self):
             # Get recent listings for this query (seen in last 2 hours)
             listings = db.query(PSA10Listing).filter(
                 PSA10Listing.search_query_id == query.id,
+                PSA10Listing.is_active == True,
                 PSA10Listing.last_seen_at >= cutoff_time,
             ).all()
             
@@ -164,3 +165,13 @@ def _deactivate_stale_opportunities(db):
     
     if stale_count > 0:
         logger.info(f"Deactivated {stale_count} stale opportunities")
+
+    # Also deactivate opportunities whose underlying listing was deactivated by the latest scrape.
+    inactive_count = db.query(ArbitrageOpportunity).filter(
+        ArbitrageOpportunity.is_active == True,
+        ArbitrageOpportunity.listing_id == PSA10Listing.id,
+        PSA10Listing.is_active == False,
+    ).update({"is_active": False}, synchronize_session=False)
+
+    if inactive_count > 0:
+        logger.info(f"Deactivated {inactive_count} opportunities for inactive listings")

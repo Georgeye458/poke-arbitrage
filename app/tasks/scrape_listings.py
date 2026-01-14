@@ -46,15 +46,17 @@ def scrape_all_listings(self):
         total_listings = 0
         new_listings = 0
         updated_listings = 0
+        removed_listings = 0
         
         for query in queries:
             try:
-                listings_count, new_count, updated_count = run_async(
+                listings_count, new_count, updated_count, removed_count = run_async(
                     _scrape_query_listings(db, query)
                 )
                 total_listings += listings_count
                 new_listings += new_count
                 updated_listings += updated_count
+                removed_listings += removed_count
                 logger.info(
                     f"Processed '{query.card_name}': {listings_count} listings "
                     f"({new_count} new, {updated_count} updated)"
@@ -73,6 +75,7 @@ def scrape_all_listings(self):
             "total_listings": total_listings,
             "new_listings": new_listings,
             "updated_listings": updated_listings,
+            "removed_listings": removed_listings,
         }
         
     except Exception as e:
@@ -82,14 +85,29 @@ def scrape_all_listings(self):
         db.close()
 
 
-async def _scrape_query_listings(db, query: SearchQuery) -> tuple[int, int, int]:
+async def _scrape_query_listings(db, query: SearchQuery) -> tuple[int, int, int, int]:
     """Scrape listings for a single search query."""
+    # Per-scan replacement semantics:
+    # - snapshot previously-active listings
+    # - mark them inactive
+    # - reactivate what we see this scan
+    previous_active_count = db.query(PSA10Listing).filter(
+        PSA10Listing.search_query_id == query.id,
+        PSA10Listing.is_active == True,
+    ).count()
+
+    db.query(PSA10Listing).filter(
+        PSA10Listing.search_query_id == query.id,
+        PSA10Listing.is_active == True,
+    ).update({"is_active": False}, synchronize_session=False)
+
     # Fetch listings from eBay
     api_response = await ebay_browse.search_psa10_listings(query.query_text, language=query.language)
     listings = ebay_browse.parse_listings(api_response)
     
     new_count = 0
     updated_count = 0
+    reactivated_count = 0
     
     for listing_data in listings:
         ebay_item_id = listing_data.get("ebay_item_id")
@@ -106,6 +124,9 @@ async def _scrape_query_listings(db, query: SearchQuery) -> tuple[int, int, int]
             existing.last_seen_at = datetime.utcnow()
             existing.price_aud = listing_data["price_aud"]
             existing.shipping_cost_aud = listing_data.get("shipping_cost_aud")
+            if not existing.is_active:
+                existing.is_active = True
+                reactivated_count += 1
             updated_count += 1
         else:
             # Create new listing
@@ -113,8 +134,10 @@ async def _scrape_query_listings(db, query: SearchQuery) -> tuple[int, int, int]
                 search_query_id=query.id,
                 **listing_data,
             )
+            new_listing.is_active = True
             db.add(new_listing)
             new_count += 1
     
     db.commit()
-    return len(listings), new_count, updated_count
+    removed_count = max(previous_active_count - reactivated_count, 0)
+    return len(listings), new_count, updated_count, removed_count
