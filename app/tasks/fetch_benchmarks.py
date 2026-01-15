@@ -99,12 +99,13 @@ async def _fetch_query_benchmark(db, query: SearchQuery, listing_mode: str) -> s
     benchmark_data = ebay_merchandising.calculate_market_benchmark(
         api_response,
         price_ceiling=settings.price_ceiling_aud,
+        price_floor=getattr(settings, "price_floor_aud", 0.0),
         language=query.language,
     )
     
     if benchmark_data is None:
-        # Card was filtered out (either no data or above $3k ceiling)
-        logger.info(f"'{query.card_name}' filtered: no valid benchmark or above ceiling")
+        # Card was filtered out (no data, above ceiling, or below floor)
+        logger.info(f"'{query.card_name}' filtered: no valid benchmark / out of scope")
         return "filtered"
     
     # Create new benchmark record

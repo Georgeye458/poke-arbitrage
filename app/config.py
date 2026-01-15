@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     
     # Price ceiling for arbitrage (AUD)
     price_ceiling_aud: float = 3000.0
+
+    # Price floor for cards-in-scope (AUD). Benchmarks below this are ignored.
+    price_floor_aud: float = 30.0
     
     # Arbitrage threshold (15% discount = 0.85)
     arbitrage_threshold: float = 0.85

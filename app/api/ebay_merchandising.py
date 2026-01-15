@@ -113,6 +113,7 @@ class EbayMerchandisingAPI:
         self,
         api_response: dict,
         price_ceiling: float = None,
+        price_floor: float = None,
         language: str = "EN",
     ) -> Optional[dict]:
         """
@@ -129,6 +130,8 @@ class EbayMerchandisingAPI:
         """
         if price_ceiling is None:
             price_ceiling = settings.price_ceiling_aud
+        if price_floor is None:
+            price_floor = getattr(settings, "price_floor_aud", 0.0)
         
         # Parse items from response
         items = self._extract_items(api_response)
@@ -184,6 +187,13 @@ class EbayMerchandisingAPI:
         if avg_price >= price_ceiling:
             logger.info(
                 f"Card filtered out: avg price ${avg_price:.2f} >= ceiling ${price_ceiling:.2f}"
+            )
+            return None
+
+        # Scope floor: ignore low-value cards
+        if avg_price < price_floor:
+            logger.info(
+                f"Card filtered out: avg price ${avg_price:.2f} < floor ${price_floor:.2f}"
             )
             return None
         
