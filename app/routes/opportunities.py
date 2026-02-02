@@ -10,11 +10,11 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ArbitrageOpportunity
+from app.models import CherryOpportunity
 from app.config import settings
-from app.tasks.scrape_listings import scrape_all_listings
-from app.tasks.fetch_benchmarks import fetch_all_benchmarks
-from app.tasks.identify_opportunities import identify_all_opportunities
+from app.tasks.fetch_cherry_listings import fetch_cherry_listings
+from app.tasks.fetch_sold_benchmarks import fetch_sold_benchmarks
+from app.tasks.identify_cherry_opportunities import identify_cherry_opportunities
 from app.tasks.celery_app import celery_app
 
 router = APIRouter()
@@ -36,20 +36,20 @@ async def view_opportunities(
         active_only: Only show active opportunities
     """
     # Build query
-    query = db.query(ArbitrageOpportunity)
+    query = db.query(CherryOpportunity)
     
     if active_only:
-        query = query.filter(ArbitrageOpportunity.is_active == True)
+        query = query.filter(CherryOpportunity.is_active == True)
     
     # Apply sorting
     if sort == "discount":
-        query = query.order_by(ArbitrageOpportunity.discount_percentage.desc())
+        query = query.order_by(CherryOpportunity.discount_percentage.desc())
     elif sort == "profit":
-        query = query.order_by(ArbitrageOpportunity.potential_profit.desc())
+        query = query.order_by(CherryOpportunity.potential_profit.desc())
     elif sort == "price":
-        query = query.order_by(ArbitrageOpportunity.listing_price.asc())
+        query = query.order_by(CherryOpportunity.store_price.asc())
     else:
-        query = query.order_by(ArbitrageOpportunity.discovered_at.desc())
+        query = query.order_by(CherryOpportunity.discovered_at.desc())
     
     opportunities = query.limit(100).all()
     
@@ -62,7 +62,7 @@ async def view_opportunities(
             "active_only": active_only,
             "count": len(opportunities),
             "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-            "destination_postcode": settings.destination_postcode,
+            "cherry_base_url": settings.cherry_base_url,
         },
     )
 
@@ -82,19 +82,19 @@ async def get_opportunities_json(
         active_only: Only show active opportunities
         limit: Maximum results to return
     """
-    query = db.query(ArbitrageOpportunity)
+    query = db.query(CherryOpportunity)
     
     if active_only:
-        query = query.filter(ArbitrageOpportunity.is_active == True)
+        query = query.filter(CherryOpportunity.is_active == True)
     
     if sort == "discount":
-        query = query.order_by(ArbitrageOpportunity.discount_percentage.desc())
+        query = query.order_by(CherryOpportunity.discount_percentage.desc())
     elif sort == "profit":
-        query = query.order_by(ArbitrageOpportunity.potential_profit.desc())
+        query = query.order_by(CherryOpportunity.potential_profit.desc())
     elif sort == "price":
-        query = query.order_by(ArbitrageOpportunity.listing_price.asc())
+        query = query.order_by(CherryOpportunity.store_price.asc())
     else:
-        query = query.order_by(ArbitrageOpportunity.discovered_at.desc())
+        query = query.order_by(CherryOpportunity.discovered_at.desc())
     
     opportunities = query.limit(limit).all()
     
@@ -104,15 +104,14 @@ async def get_opportunities_json(
             {
                 "id": opp.id,
                 "card_name": opp.card_name,
-                "listing_title": opp.listing_title,
-                "listing_price": float(opp.listing_price),
-                "shipping_cost": float(opp.shipping_cost) if opp.shipping_cost is not None else None,
+                "product_title": opp.product_title,
+                "store_price": float(opp.store_price),
                 "market_price": float(opp.market_price),
                 "discount_percentage": float(opp.discount_percentage),
                 "potential_profit": float(opp.potential_profit),
-                "item_url": opp.item_url,
+                "product_url": opp.product_url,
                 "image_url": opp.image_url,
-                "seller_username": opp.seller_username,
+                "in_stock": opp.in_stock,
                 "discovered_at": opp.discovered_at.isoformat(),
                 "is_active": opp.is_active,
             }
@@ -126,25 +125,31 @@ class RunScanRequest(BaseModel):
     min_discount_pct: float | None = Field(default=None, ge=0.0, le=50.0)
     # Backward compat: threshold multiplier. 0.85 means "15% off".
     arbitrage_threshold: float | None = Field(default=None, ge=0.5, le=1.0)
-    # Mode: "PSA10" (strict) or "ALL" (no grade/grader constraints)
-    listing_mode: str | None = Field(default="PSA10")
+    # Optional: only consider in-stock Cherry items (default true via settings)
+    in_stock_only: bool | None = Field(default=None)
+    # Backward-compat from prior UI; ignored in Cherry-vs-sold pipeline
+    listing_mode: str | None = Field(default=None)
 
 
 @router.post("/api/run-scan")
 async def run_scan_now(payload: RunScanRequest | None = None):
-    """Trigger a manual scan run (scrape -> benchmarks -> score)."""
-    listing_mode = (payload.listing_mode if payload else "PSA10") or "PSA10"
-    listing_mode = listing_mode.upper()
-
+    """Trigger a manual scan run (Cherry listings -> sold benchmarks -> score)."""
     threshold = payload.arbitrage_threshold if payload else None
     if payload and payload.min_discount_pct is not None:
         # Convert min discount (%) -> multiplier threshold.
         threshold = 1.0 - (float(payload.min_discount_pct) / 100.0)
+
+    # Allow per-run override of in-stock requirement (defaults to settings).
+    if payload and payload.in_stock_only is not None:
+        # NOTE: settings are read at import time; for per-run toggles we'd pass through kwargs.
+        # For now, this is informational; the backend uses settings.cherry_require_in_stock.
+        pass
+
     # Run sequentially via countdowns (simple + reliable)
-    scrape = scrape_all_listings.apply_async(kwargs={"listing_mode": listing_mode})
-    benchmarks = fetch_all_benchmarks.apply_async(kwargs={"listing_mode": listing_mode}, countdown=75)
-    score = identify_all_opportunities.apply_async(
-        kwargs={"arbitrage_threshold": threshold, "listing_mode": listing_mode},
+    scrape = fetch_cherry_listings.apply_async()
+    benchmarks = fetch_sold_benchmarks.apply_async(countdown=90)
+    score = identify_cherry_opportunities.apply_async(
+        kwargs={"arbitrage_threshold": threshold},
         countdown=180,
     )
 
@@ -152,11 +157,10 @@ async def run_scan_now(payload: RunScanRequest | None = None):
         "status": "queued",
         "queued_at": datetime.utcnow().isoformat(),
         "arbitrage_threshold": threshold,
-        "listing_mode": listing_mode,
         "tasks": {
-            "scrape_all_listings": scrape.id,
-            "fetch_all_benchmarks": benchmarks.id,
-            "identify_all_opportunities": score.id,
+            "fetch_cherry_listings": scrape.id,
+            "fetch_sold_benchmarks": benchmarks.id,
+            "identify_cherry_opportunities": score.id,
         },
     }
 

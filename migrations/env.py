@@ -8,7 +8,15 @@ from alembic import context
 
 # Import models for autogenerate support
 from app.database import Base
-from app.models import SearchQuery, PSA10Listing, MarketBenchmark, ArbitrageOpportunity
+from app.models import (
+    SearchQuery,
+    PSA10Listing,
+    MarketBenchmark,
+    ArbitrageOpportunity,
+    CherryListing,
+    SoldBenchmark,
+    CherryOpportunity,
+)
 
 # Alembic Config object
 config = context.config

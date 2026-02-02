@@ -27,9 +27,14 @@ celery_app = Celery(
     broker=redis_url,
     backend=redis_url,
     include=[
+        # Legacy pipeline (kept for reference)
         "app.tasks.scrape_listings",
         "app.tasks.fetch_benchmarks",
         "app.tasks.identify_opportunities",
+        # New Cherry-vs-sold pipeline
+        "app.tasks.fetch_cherry_listings",
+        "app.tasks.fetch_sold_benchmarks",
+        "app.tasks.identify_cherry_opportunities",
     ],
 )
 
@@ -57,18 +62,18 @@ celery_app.conf.update(**celery_config)
 celery_app.conf.beat_schedule = {}
 if settings.scheduler_enabled:
     celery_app.conf.beat_schedule = {
-        "scrape-listings-every-30-min": {
-            "task": "app.tasks.scrape_listings.scrape_all_listings",
-            "schedule": settings.task_interval_seconds,  # 1800 seconds = 30 min
-        },
-        "fetch-benchmarks-every-30-min": {
-            "task": "app.tasks.fetch_benchmarks.fetch_all_benchmarks",
+        "fetch-cherry-listings-every-30-min": {
+            "task": "app.tasks.fetch_cherry_listings.fetch_cherry_listings",
             "schedule": settings.task_interval_seconds,
         },
-        "identify-opportunities-every-30-min": {
-            "task": "app.tasks.identify_opportunities.identify_all_opportunities",
-            # Run 2 minutes after benchmarks to ensure data is ready
+        "fetch-sold-benchmarks-every-30-min": {
+            "task": "app.tasks.fetch_sold_benchmarks.fetch_sold_benchmarks",
             "schedule": settings.task_interval_seconds,
-            "options": {"countdown": 120},
+            "options": {"countdown": 90},
+        },
+        "identify-cherry-opportunities-every-30-min": {
+            "task": "app.tasks.identify_cherry_opportunities.identify_cherry_opportunities",
+            "schedule": settings.task_interval_seconds,
+            "options": {"countdown": 180},
         },
     }

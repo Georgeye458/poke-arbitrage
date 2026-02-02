@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     
     # Arbitrage threshold (15% discount = 0.85)
     arbitrage_threshold: float = 0.85
+
+    # Cherry Collectables (Shopify) source
+    cherry_base_url: str = "https://www.cherrycollectables.com.au"
+    cherry_collection_handle: str = "pokemon-singles"
+    cherry_require_in_stock: bool = True
+
+    # Sold comps (eBay Finding API)
+    sold_comps_max_results: int = 50
     
     # Task scheduling interval (seconds)
     task_interval_seconds: int = 1800  # 30 minutes

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PokeArbitrage Scanner | PSA 10 Opportunities</title>
+    <title>PokeArbitrage Scanner | Cherry vs eBay Sold</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -357,7 +357,7 @@
     <div class="container">
         <header>
             <h1 class="logo">PokeArbitrage</h1>
-            <p class="tagline">PSA 10 Arbitrage Scanner</p>
+            <p class="tagline">Cherry PSA 10 vs eBay Sold Market</p>
         </header>
 
         <div class="stats-bar">
@@ -367,7 +367,7 @@
             </div>
             {% if opportunities %}
             <div class="stat">
-                <div class="stat-value electric">${{ "%.0f"|format(opportunities[0].discount_percentage) }}%</div>
+                <div class="stat-value electric">{{ "%.0f"|format(opportunities[0].discount_percentage) }}%</div>
                 <div class="stat-label">Best Discount</div>
             </div>
             <div class="stat">
@@ -392,13 +392,6 @@
               <input id="min-discount" type="range" min="0" max="50" step="5" value="15" style="margin-left:0.5rem;vertical-align:middle;">
               <span id="min-discount-value" style="margin-left:0.5rem;">15%</span>
             </label>
-            <label class="sort-btn" style="cursor:default;">
-              Mode:
-              <select id="listing-mode" style="margin-left:0.5rem;background:transparent;color:inherit;border:1px solid var(--border-subtle);border-radius:6px;padding:0.25rem 0.5rem;">
-                <option value="PSA10" selected>PSA 10 only</option>
-                <option value="ALL">All listings</option>
-              </select>
-            </label>
             <button id="run-scan" class="sort-btn" type="button">Run scan now</button>
         </div>
         <div id="scan-status" style="text-align:center;color:var(--text-secondary);margin:-0.5rem 0 1.5rem 0;"></div>
@@ -417,35 +410,27 @@
 
                 <div class="card-content">
                     <div class="card-name">{{ opp.card_name }}</div>
-                    <h3 class="card-title">{{ opp.listing_title }}</h3>
+                    <h3 class="card-title">{{ opp.product_title }}</h3>
 
                     <div class="price-comparison">
                         <div class="price-box">
-                            <div class="price-label">Listing (incl ship)</div>
-                            <div class="price-value listing">${{ "%.2f"|format(opp.listing_price) }}</div>
+                            <div class="price-label">Cherry</div>
+                            <div class="price-value listing">${{ "%.2f"|format(opp.store_price) }}</div>
                         </div>
                         <div class="price-arrow">→</div>
                         <div class="price-box">
-                            <div class="price-label">Market</div>
+                            <div class="price-label">eBay Sold Market</div>
                             <div class="price-value market">${{ "%.2f"|format(opp.market_price) }}</div>
                         </div>
                     </div>
-
-                    {% if opp.shipping_cost is not none and opp.shipping_cost > 0 %}
-                    <div class="seller-info">Shipping est: ${{ "%.2f"|format(opp.shipping_cost) }} (to AU {{ destination_postcode }})</div>
-                    {% endif %}
 
                     <div class="profit-row">
                         <span class="profit-label">Potential Profit</span>
                         <span class="profit-value">+${{ "%.2f"|format(opp.potential_profit) }}</span>
                     </div>
 
-                    {% if opp.seller_username %}
-                    <div class="seller-info">Seller: {{ opp.seller_username }}</div>
-                    {% endif %}
-
-                    <a href="{{ opp.item_url }}" target="_blank" rel="noopener" class="buy-btn">
-                        View on eBay →
+                    <a href="{{ opp.product_url }}" target="_blank" rel="noopener" class="buy-btn">
+                        View on Cherry →
                     </a>
                 </div>
             </div>
@@ -455,7 +440,7 @@
         <div class="empty-state">
             <div class="empty-icon">🔍</div>
             <h2 class="empty-title">No Opportunities Found</h2>
-            <p>The scanner is actively monitoring PSA 10 listings. Check back soon!</p>
+            <p>The scanner is actively comparing Cherry PSA 10 prices vs eBay sold market. Check back soon!</p>
         </div>
         {% endif %}
 
@@ -469,10 +454,8 @@
       const statusEl = document.getElementById('scan-status');
       const discountEl = document.getElementById('min-discount');
       const discountValueEl = document.getElementById('min-discount-value');
-      const modeEl = document.getElementById('listing-mode');
       const LS_KEY = 'pokearb:lastScanTasks';
       const LS_DISCOUNT = 'pokearb:minDiscountPct';
-      const LS_MODE = 'pokearb:listingMode';
 
       async function pollTask(taskId) {
         if (!taskId) return null;
@@ -481,33 +464,32 @@
       }
 
       async function pollScan(tasks) {
-        if (!tasks?.identify_all_opportunities) return;
+        if (!tasks?.identify_cherry_opportunities) return;
         statusEl.textContent = 'Scan running...';
         const started = Date.now();
 
         const tick = async () => {
           try {
-            const score = await pollTask(tasks.identify_all_opportunities);
+            const score = await pollTask(tasks.identify_cherry_opportunities);
             const state = score?.state || 'UNKNOWN';
 
             if (state === 'SUCCESS') {
               const secs = Math.round((Date.now() - started) / 1000);
-              const scrape = tasks.scrape_all_listings ? await pollTask(tasks.scrape_all_listings) : null;
-              const bench = tasks.fetch_all_benchmarks ? await pollTask(tasks.fetch_all_benchmarks) : null;
+              const scrape = tasks.fetch_cherry_listings ? await pollTask(tasks.fetch_cherry_listings) : null;
+              const bench = tasks.fetch_sold_benchmarks ? await pollTask(tasks.fetch_sold_benchmarks) : null;
               const s = scrape?.result || {};
               const b = bench?.result || {};
               const r = score?.result || {};
 
               const listingsMsg = (scrape && scrape.state === 'SUCCESS')
-                ? `Listings: +${s.new_listings || 0} new, ${s.updated_listings || 0} updated, ${s.removed_listings || 0} removed`
-                : 'Listings: (pending)';
+                ? `Cherry matches: ${s.matched || 0}. +${s.new_listings || 0} new, ${s.updated_listings || 0} updated, ${s.removed_listings || 0} removed`
+                : 'Cherry: (pending)';
               const benchMsg = (bench && bench.state === 'SUCCESS')
-                ? `Benchmarks: ${b.stored || 0} stored, ${b.filtered || 0} filtered`
-                : 'Benchmarks: (pending)';
+                ? `Sold benchmarks: ${b.stored || 0} stored, ${b.filtered || 0} filtered`
+                : 'Sold benchmarks: (pending)';
               const th = (r.arbitrage_threshold != null) ? Math.round((1 - r.arbitrage_threshold) * 100) : null;
               const thMsg = (th != null) ? `Min discount: ${th}%` : '';
-              const modeMsg = (r.listing_mode) ? `Mode: ${r.listing_mode}` : '';
-              const oppMsg = `Opportunities: ${r.opportunities_found || 0} found (checked ${r.listings_checked || 0} listings). ${thMsg} ${modeMsg}`.trim();
+              const oppMsg = `Opportunities: ${r.opportunities_found || 0} found (checked ${r.listings_checked || 0} items). ${thMsg}`.trim();
 
               statusEl.textContent = `Scan completed (~${secs}s). ${listingsMsg}. ${benchMsg}. ${oppMsg}. Refreshing...`;
               localStorage.removeItem(LS_KEY);
@@ -544,8 +526,6 @@
       try {
         const savedDiscount = localStorage.getItem(LS_DISCOUNT);
         if (savedDiscount && discountEl) discountEl.value = savedDiscount;
-        const savedMode = localStorage.getItem(LS_MODE);
-        if (savedMode && modeEl) modeEl.value = savedMode;
       } catch (e) {}
       const syncDiscountLabel = () => {
         if (!discountEl || !discountValueEl) return;
@@ -558,11 +538,6 @@
           try { localStorage.setItem(LS_DISCOUNT, discountEl.value); } catch (e) {}
         });
       }
-      if (modeEl) {
-        modeEl.addEventListener('change', () => {
-          try { localStorage.setItem(LS_MODE, modeEl.value); } catch (e) {}
-        });
-      }
 
       if (btn) {
         btn.addEventListener('click', async () => {
@@ -571,11 +546,10 @@
           statusEl.textContent = '';
           try {
             const minDiscountPct = discountEl ? parseFloat(discountEl.value) : null;
-            const listingMode = modeEl ? modeEl.value : 'PSA10';
             const res = await fetch('/api/run-scan', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ min_discount_pct: minDiscountPct, listing_mode: listingMode }),
+              body: JSON.stringify({ min_discount_pct: minDiscountPct }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data?.detail || 'Failed to queue scan');
