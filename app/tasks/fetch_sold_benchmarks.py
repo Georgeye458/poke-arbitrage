@@ -8,7 +8,7 @@ from decimal import Decimal
 from app.api.ebay_finding_sold import ebay_finding_sold
 from app.config import settings
 from app.database import SessionLocal
-from app.models import SearchQuery, SoldBenchmark
+from app.models import SearchQuery, SoldBenchmark, CherryListing
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,15 @@ def fetch_sold_benchmarks(self):
 
     db = SessionLocal()
     try:
-        queries = db.query(SearchQuery).filter(SearchQuery.is_active == True).all()
+        # Only compute benchmarks for queries that have active Cherry listings.
+        queries = (
+            db.query(SearchQuery)
+            .join(CherryListing, CherryListing.search_query_id == SearchQuery.id)
+            .filter(SearchQuery.is_active == True)
+            .filter(CherryListing.is_active == True)
+            .distinct()
+            .all()
+        )
         if not queries:
             logger.warning("No active search queries found")
             return {"status": "no_queries", "processed": 0}

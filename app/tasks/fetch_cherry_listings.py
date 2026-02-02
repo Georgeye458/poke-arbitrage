@@ -1,4 +1,4 @@
-"""Task 1 (new): Fetch Cherry Collectables PSA10 products and match to in-scope queries."""
+"""Task 1 (new): Fetch Cherry Collectables PSA10 products (Pokemon singles)."""
 
 import asyncio
 import logging
@@ -55,22 +55,37 @@ def _is_jp_title(title: str) -> bool:
     )
 
 
-def _match_score(query_text: str, title: str) -> float:
-    qt = _tokens(query_text)
-    tt = _tokens(title)
-    if not qt or not tt:
-        return 0.0
+def _derive_query_from_title(title: str) -> tuple[str, str]:
+    """Derive (query_text, card_name) from a Cherry product title.
 
-    # Require the main name token to exist (first token of query).
-    main = next(iter(qt))
-    if main not in tt:
-        # try relaxed: any token length>=4 must exist
-        long_tokens = [x for x in qt if len(x) >= 4]
-        if long_tokens and not any(x in tt for x in long_tokens):
-            return 0.0
+    We strip grading + language noise and keep a stable, searchable identity string.
+    """
+    t = (title or "").strip()
+    u = t.upper()
 
-    matched = len(qt.intersection(tt))
-    return matched / max(len(qt), 1)
+    # Remove grading/language prefixes commonly present in Cherry titles.
+    for needle in ["JAPANESE ", "CHINESE ", "KOREAN "]:
+        if u.startswith(needle):
+            t = t[len(needle) :].strip()
+            u = t.upper()
+            break
+
+    # Remove PSA grade prefix like "PSA 10 " / "PSA10 "
+    if u.startswith("PSA 10 "):
+        t = t[7:].strip()
+    elif u.startswith("PSA10 "):
+        t = t[6:].strip()
+
+    # Remove trailing inventory numbers (often at end)
+    t = re.sub(r"\s+\d{2,}$", "", t).strip()
+
+    # Remove obvious card number patterns like 123/456
+    t = re.sub(r"\b\d{1,4}\s*/\s*\d{1,4}\b", "", t).strip()
+
+    # Normalize separators
+    query_text = " ".join(_WORD_RE.findall(t.lower()))
+    card_name = t[:255] if t else title[:255]
+    return query_text[:255], card_name
 
 
 @celery_app.task(bind=True, max_retries=3)
@@ -82,7 +97,7 @@ def fetch_cherry_listings(self):
     - mark all currently-active Cherry listings inactive
     - reactivate/update those seen this run
     """
-    logger.info("Starting Task 1: Fetch Cherry Listings (PSA10 only, query-based search)")
+    logger.info("Starting Task 1: Fetch Cherry Listings (PSA10 only, collection scan)")
 
     db = SessionLocal()
     try:
@@ -97,115 +112,121 @@ def fetch_cherry_listings(self):
             {"is_active": False}, synchronize_session=False
         )
 
+        # Pull the Pokemon singles collection in pages (with gentle pacing).
         now = datetime.utcnow()
         new_count = 0
         updated_count = 0
         reactivated_count = 0
         matched_count = 0
+        created_queries = 0
 
-        for q in queries:
-            lang = (q.language or "EN").upper()
-            keywords = f"psa 10 {q.query_text}"
-            if lang == "JP":
-                keywords = f"{keywords} japanese"
-
-            # Use predictive search first (low request volume).
+        collection = settings.cherry_collection_handle
+        page = 1
+        max_pages = 30  # safety cap
+        while page <= max_pages:
             try:
-                suggestions = run_async(cherry_shopify.search_suggest_products(keywords, limit=8))
+                batch: list[CherryProduct] = run_async(
+                    cherry_shopify.fetch_collection_products(collection, page=page)
+                )
             except Exception as e:
-                logger.error(f"Cherry search failed for '{q.card_name}': {e}")
+                # Back off a bit (covers 429s and transient errors)
+                logger.warning(f"Cherry page fetch failed page={page}: {e}")
+                time.sleep(5)
                 continue
 
-            # For each suggested handle, fetch product JS to get variant ids/prices.
-            seen_handles: set[str] = set()
-            for s in suggestions:
-                handle = (s.get("handle") or "").strip()
-                if not handle or handle in seen_handles:
-                    continue
-                seen_handles.add(handle)
+            if not batch:
+                break
 
-                # gentle pacing to avoid 429s
-                time.sleep(0.15)
-                try:
-                    product_js = run_async(cherry_shopify.fetch_product_js(handle))
-                    variants = cherry_shopify.parse_product_js_variants(product_js)
-                except Exception as e:
-                    logger.debug(f"Cherry product fetch failed handle={handle}: {e}")
+            for prod in batch:
+                if settings.cherry_require_in_stock and not prod.in_stock:
+                    continue
+                if not _is_psa10(prod.title, prod.tags):
                     continue
 
-                # Keep only PSA10 products and (optionally) in-stock variants.
-                for prod in variants:
-                    if settings.cherry_require_in_stock and not prod.in_stock:
-                        continue
-                    if not _is_psa10(prod.title, prod.tags):
-                        continue
-                    # Ensure this actually matches the query text (avoid generic charizard hits).
-                    if _match_score(q.query_text, prod.title) < 0.6:
-                        continue
-                    # Enforce language stream separation.
-                    if lang == "JP":
-                        if not _is_jp_title(prod.title):
-                            continue
-                    else:
-                        if _is_jp_title(prod.title):
-                            continue
+                lang = "JP" if _is_jp_title(prod.title) else "EN"
+                query_text, card_name = _derive_query_from_title(prod.title)
+                if not query_text:
+                    continue
 
-                    matched_count += 1
-
-                    existing = (
-                        db.query(CherryListing)
-                        .filter(CherryListing.product_id == prod.product_id)
-                        .filter(CherryListing.variant_id == prod.variant_id)
-                        .first()
+                # Ensure SearchQuery exists for this derived identity.
+                sq = (
+                    db.query(SearchQuery)
+                    .filter(SearchQuery.query_text == query_text)
+                    .filter(SearchQuery.language == lang)
+                    .first()
+                )
+                if not sq:
+                    sq = SearchQuery(
+                        query_text=query_text,
+                        card_name=card_name,
+                        language=lang,
+                        is_active=True,
                     )
+                    db.add(sq)
+                    db.flush()  # get sq.id
+                    created_queries += 1
 
-                    if existing:
-                        existing.search_query_id = q.id
-                        existing.title = prod.title
-                        existing.handle = prod.handle
-                        existing.product_url = prod.product_url
-                        existing.image_url = prod.image_url
-                        existing.price_aud = prod.price_aud
-                        existing.in_stock = prod.in_stock
-                        existing.language = lang
-                        existing.grader = "PSA"
-                        existing.grade = 10
-                        existing.last_seen_at = now
-                        if not existing.is_active:
-                            existing.is_active = True
-                            reactivated_count += 1
-                        updated_count += 1
-                    else:
-                        db.add(
-                            CherryListing(
-                                search_query_id=q.id,
-                                product_id=prod.product_id,
-                                variant_id=prod.variant_id,
-                                title=prod.title,
-                                handle=prod.handle,
-                                product_url=prod.product_url,
-                                image_url=prod.image_url,
-                                price_aud=Decimal(prod.price_aud),
-                                in_stock=prod.in_stock,
-                                language=lang,
-                                grader="PSA",
-                                grade=10,
-                                is_active=True,
-                                scraped_at=now,
-                                last_seen_at=now,
-                            )
+                matched_count += 1
+
+                existing = (
+                    db.query(CherryListing)
+                    .filter(CherryListing.product_id == prod.product_id)
+                    .filter(CherryListing.variant_id == prod.variant_id)
+                    .first()
+                )
+
+                if existing:
+                    existing.search_query_id = sq.id
+                    existing.title = prod.title
+                    existing.handle = prod.handle
+                    existing.product_url = prod.product_url
+                    existing.image_url = prod.image_url
+                    existing.price_aud = prod.price_aud
+                    existing.in_stock = prod.in_stock
+                    existing.language = lang
+                    existing.grader = "PSA"
+                    existing.grade = 10
+                    existing.last_seen_at = now
+                    if not existing.is_active:
+                        existing.is_active = True
+                        reactivated_count += 1
+                    updated_count += 1
+                else:
+                    db.add(
+                        CherryListing(
+                            search_query_id=sq.id,
+                            product_id=prod.product_id,
+                            variant_id=prod.variant_id,
+                            title=prod.title,
+                            handle=prod.handle,
+                            product_url=prod.product_url,
+                            image_url=prod.image_url,
+                            price_aud=Decimal(prod.price_aud),
+                            in_stock=prod.in_stock,
+                            language=lang,
+                            grader="PSA",
+                            grade=10,
+                            is_active=True,
+                            scraped_at=now,
+                            last_seen_at=now,
                         )
-                        new_count += 1
+                    )
+                    new_count += 1
 
-        db.commit()
+            # commit per page to keep transaction small
+            db.commit()
+            time.sleep(0.25)
+            page += 1
+
         removed_count = max(prev_active - reactivated_count, 0)
 
         logger.info(
-            "Task 1 complete: %s matched, %s new, %s updated, %s removed",
+            "Task 1 complete: %s matched, %s new, %s updated, %s removed (new queries=%s)",
             matched_count,
             new_count,
             updated_count,
             removed_count,
+            created_queries,
         )
 
         return {
@@ -214,6 +235,7 @@ def fetch_cherry_listings(self):
             "new_listings": new_count,
             "updated_listings": updated_count,
             "removed_listings": removed_count,
+            "new_queries": created_queries,
         }
 
     except Exception as e:
