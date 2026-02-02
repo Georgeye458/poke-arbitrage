@@ -5,6 +5,8 @@ import logging
 from datetime import datetime
 from decimal import Decimal
 
+import httpx
+
 from app.api.ebay_finding_sold import ebay_finding_sold
 from app.config import settings
 from app.database import SessionLocal
@@ -73,8 +75,58 @@ def fetch_sold_benchmarks(self):
         stored = 0
         filtered = 0
         errors = 0
+        rate_limited = False
 
-        for q in queries:
+        # Only compute for queries that need refresh (no recent benchmark)
+        cutoff_bench = datetime.utcnow()
+
+        # Sort by recency of cherry listing activity (best-effort)
+        q_ids = [q.id for q in queries]
+        recent_listing = (
+            db.query(CherryListing.search_query_id, CherryListing.last_seen_at)
+            .filter(CherryListing.search_query_id.in_(q_ids))
+            .filter(CherryListing.is_active == True)
+            .order_by(CherryListing.last_seen_at.desc())
+            .all()
+        )
+        ordered_ids = []
+        seen = set()
+        for sid, _ts in recent_listing:
+            if sid not in seen:
+                ordered_ids.append(sid)
+                seen.add(sid)
+        for sid in q_ids:
+            if sid not in seen:
+                ordered_ids.append(sid)
+                seen.add(sid)
+
+        max_q = int(getattr(settings, "sold_benchmark_max_queries_per_run", 8) or 8)
+        min_age = int(getattr(settings, "sold_benchmark_min_age_hours", 24) or 24)
+        recent_cutoff = datetime.utcnow().timestamp() - (min_age * 3600)
+
+        # Map id -> query
+        q_by_id = {q.id: q for q in queries}
+
+        processed = 0
+        for qid in ordered_ids:
+            q = q_by_id.get(qid)
+            if not q:
+                continue
+
+            # Skip if we have a recent benchmark
+            latest = (
+                db.query(SoldBenchmark)
+                .filter(SoldBenchmark.search_query_id == q.id)
+                .order_by(SoldBenchmark.calculated_at.desc())
+                .first()
+            )
+            if latest and latest.calculated_at and latest.calculated_at.timestamp() >= recent_cutoff:
+                continue
+
+            processed += 1
+            if processed > max_q:
+                break
+
             try:
                 comps = run_async(
                     ebay_finding_sold.find_completed_items(
@@ -125,14 +177,39 @@ def fetch_sold_benchmarks(self):
                 db.add(bench)
                 db.commit()
                 stored += 1
+            except httpx.HTTPStatusError as e:
+                # eBay Finding API often returns 500 with a JSON RateLimiter error body.
+                body = ""
+                try:
+                    body = e.response.text or ""
+                except Exception:
+                    body = ""
+                if "RateLimiter" in body or "exceeded the number of times" in body:
+                    logger.error("Rate limited by eBay Finding API; stopping benchmark fetch for now.")
+                    rate_limited = True
+                    db.rollback()
+                    break
+                logger.error(f"Error fetching sold benchmark for '{q.card_name}': {e}")
+                db.rollback()
+                errors += 1
+                continue
             except Exception as e:
                 logger.error(f"Error fetching sold benchmark for '{q.card_name}': {e}")
                 db.rollback()
                 errors += 1
                 continue
 
-        logger.info(f"Task 2 complete: {stored} stored, {filtered} filtered, {errors} errors")
-        return {"status": "success", "stored": stored, "filtered": filtered, "errors": errors}
+        logger.info(
+            f"Task 2 complete: {stored} stored, {filtered} filtered, {errors} errors (rate_limited={rate_limited})"
+        )
+        return {
+            "status": "success",
+            "stored": stored,
+            "filtered": filtered,
+            "errors": errors,
+            "rate_limited": rate_limited,
+            "processed": processed,
+        }
 
     except Exception as e:
         logger.error(f"Task 2 failed: {e}")

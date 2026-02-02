@@ -53,6 +53,8 @@ class Settings(BaseSettings):
 
     # Sold comps (eBay Finding API)
     sold_comps_max_results: int = 50
+    sold_benchmark_max_queries_per_run: int = 8
+    sold_benchmark_min_age_hours: int = 24
     
     # Task scheduling interval (seconds)
     task_interval_seconds: int = 1800  # 30 minutes
