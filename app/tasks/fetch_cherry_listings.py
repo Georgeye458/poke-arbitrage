@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+import time
 from datetime import datetime
 from decimal import Decimal
 
@@ -81,7 +82,7 @@ def fetch_cherry_listings(self):
     - mark all currently-active Cherry listings inactive
     - reactivate/update those seen this run
     """
-    logger.info("Starting Task 1: Fetch Cherry Listings (PSA10 only)")
+    logger.info("Starting Task 1: Fetch Cherry Listings (PSA10 only, query-based search)")
 
     db = SessionLocal()
     try:
@@ -96,118 +97,115 @@ def fetch_cherry_listings(self):
             {"is_active": False}, synchronize_session=False
         )
 
-        # Partition queries by language
-        queries_by_lang: dict[str, list[SearchQuery]] = {"EN": [], "JP": []}
-        for q in queries:
-            queries_by_lang[(q.language or "EN").upper()].append(q)
-
-        # Fetch all pages from the collection
-        collection = settings.cherry_collection_handle
-        page = 1
-        all_products: list[CherryProduct] = []
-        while True:
-            batch = run_async(cherry_shopify.fetch_collection_products(collection, page=page))
-            if not batch:
-                break
-            all_products.extend(batch)
-            page += 1
-            if page > 50:  # safety cap
-                break
-
-        logger.info(f"Cherry products fetched: {len(all_products)} variants")
-
         now = datetime.utcnow()
         new_count = 0
         updated_count = 0
         reactivated_count = 0
-        skipped_non_psa10 = 0
-        skipped_oos = 0
         matched_count = 0
 
-        for prod in all_products:
-            if settings.cherry_require_in_stock and not prod.in_stock:
-                skipped_oos += 1
-                continue
-            if not _is_psa10(prod.title, prod.tags):
-                skipped_non_psa10 += 1
-                continue
+        for q in queries:
+            lang = (q.language or "EN").upper()
+            keywords = f"psa 10 {q.query_text}"
+            if lang == "JP":
+                keywords = f"{keywords} japanese"
 
-            lang = "JP" if _is_jp_title(prod.title) else "EN"
-            candidates = queries_by_lang.get(lang) or []
-            if not candidates:
-                continue
-
-            # Find best query match
-            best_q = None
-            best_score = 0.0
-            for q in candidates:
-                score = _match_score(q.query_text, prod.title)
-                if score > best_score:
-                    best_score = score
-                    best_q = q
-
-            # Threshold tuned to avoid noisy matches.
-            if not best_q or best_score < 0.6:
+            # Use predictive search first (low request volume).
+            try:
+                suggestions = run_async(cherry_shopify.search_suggest_products(keywords, limit=8))
+            except Exception as e:
+                logger.error(f"Cherry search failed for '{q.card_name}': {e}")
                 continue
 
-            matched_count += 1
+            # For each suggested handle, fetch product JS to get variant ids/prices.
+            seen_handles: set[str] = set()
+            for s in suggestions:
+                handle = (s.get("handle") or "").strip()
+                if not handle or handle in seen_handles:
+                    continue
+                seen_handles.add(handle)
 
-            existing = (
-                db.query(CherryListing)
-                .filter(CherryListing.product_id == prod.product_id)
-                .filter(CherryListing.variant_id == prod.variant_id)
-                .first()
-            )
+                # gentle pacing to avoid 429s
+                time.sleep(0.15)
+                try:
+                    product_js = run_async(cherry_shopify.fetch_product_js(handle))
+                    variants = cherry_shopify.parse_product_js_variants(product_js)
+                except Exception as e:
+                    logger.debug(f"Cherry product fetch failed handle={handle}: {e}")
+                    continue
 
-            if existing:
-                existing.search_query_id = best_q.id
-                existing.title = prod.title
-                existing.handle = prod.handle
-                existing.product_url = prod.product_url
-                existing.image_url = prod.image_url
-                existing.price_aud = prod.price_aud
-                existing.in_stock = prod.in_stock
-                existing.language = lang
-                existing.grader = "PSA"
-                existing.grade = 10
-                existing.last_seen_at = now
-                if not existing.is_active:
-                    existing.is_active = True
-                    reactivated_count += 1
-                updated_count += 1
-            else:
-                db.add(
-                    CherryListing(
-                        search_query_id=best_q.id,
-                        product_id=prod.product_id,
-                        variant_id=prod.variant_id,
-                        title=prod.title,
-                        handle=prod.handle,
-                        product_url=prod.product_url,
-                        image_url=prod.image_url,
-                        price_aud=Decimal(prod.price_aud),
-                        in_stock=prod.in_stock,
-                        language=lang,
-                        grader="PSA",
-                        grade=10,
-                        is_active=True,
-                        scraped_at=now,
-                        last_seen_at=now,
+                # Keep only PSA10 products and (optionally) in-stock variants.
+                for prod in variants:
+                    if settings.cherry_require_in_stock and not prod.in_stock:
+                        continue
+                    if not _is_psa10(prod.title, prod.tags):
+                        continue
+                    # Ensure this actually matches the query text (avoid generic charizard hits).
+                    if _match_score(q.query_text, prod.title) < 0.6:
+                        continue
+                    # Enforce language stream separation.
+                    if lang == "JP":
+                        if not _is_jp_title(prod.title):
+                            continue
+                    else:
+                        if _is_jp_title(prod.title):
+                            continue
+
+                    matched_count += 1
+
+                    existing = (
+                        db.query(CherryListing)
+                        .filter(CherryListing.product_id == prod.product_id)
+                        .filter(CherryListing.variant_id == prod.variant_id)
+                        .first()
                     )
-                )
-                new_count += 1
+
+                    if existing:
+                        existing.search_query_id = q.id
+                        existing.title = prod.title
+                        existing.handle = prod.handle
+                        existing.product_url = prod.product_url
+                        existing.image_url = prod.image_url
+                        existing.price_aud = prod.price_aud
+                        existing.in_stock = prod.in_stock
+                        existing.language = lang
+                        existing.grader = "PSA"
+                        existing.grade = 10
+                        existing.last_seen_at = now
+                        if not existing.is_active:
+                            existing.is_active = True
+                            reactivated_count += 1
+                        updated_count += 1
+                    else:
+                        db.add(
+                            CherryListing(
+                                search_query_id=q.id,
+                                product_id=prod.product_id,
+                                variant_id=prod.variant_id,
+                                title=prod.title,
+                                handle=prod.handle,
+                                product_url=prod.product_url,
+                                image_url=prod.image_url,
+                                price_aud=Decimal(prod.price_aud),
+                                in_stock=prod.in_stock,
+                                language=lang,
+                                grader="PSA",
+                                grade=10,
+                                is_active=True,
+                                scraped_at=now,
+                                last_seen_at=now,
+                            )
+                        )
+                        new_count += 1
 
         db.commit()
         removed_count = max(prev_active - reactivated_count, 0)
 
         logger.info(
-            "Task 1 complete: %s matched, %s new, %s updated, %s removed (skipped: %s non-PSA10, %s OOS)",
+            "Task 1 complete: %s matched, %s new, %s updated, %s removed",
             matched_count,
             new_count,
             updated_count,
             removed_count,
-            skipped_non_psa10,
-            skipped_oos,
         )
 
         return {
