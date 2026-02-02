@@ -9,7 +9,6 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import engine, Base
 from app.routes.opportunities import router as opportunities_router
-from app.seeds import seed_search_queries
 
 # Configure logging
 logging.basicConfig(
@@ -29,7 +28,7 @@ async def lifespan(app: FastAPI):
     # Create tables (for development; use Alembic migrations in production)
     if settings.environment == "development":
         Base.metadata.create_all(bind=engine)
-        seed_search_queries()
+        # Search queries are now dynamically created from Cherry listings
     
     yield
     

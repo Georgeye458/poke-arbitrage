@@ -1,4 +1,9 @@
-"""Database seed data for initial search queries."""
+"""Database seed data for initial search queries.
+
+DEPRECATED: This module is no longer used. Search queries are now dynamically
+created from Cherry Collectables PSA 10 listings via fetch_cherry_listings task.
+The static seed list below is kept for reference only.
+"""
 
 import logging
 from app.database import SessionLocal
