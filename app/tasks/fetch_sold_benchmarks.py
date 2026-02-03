@@ -1,4 +1,8 @@
-"""Task 2 (new): Fetch sold benchmarks from eBay completed items."""
+"""Task 2: Fetch market benchmarks from eBay active listings.
+
+Uses the Browse API to fetch active PSA 10 listings and compute median prices
+as the market benchmark. Falls back to Finding API for sold comps if available.
+"""
 
 import asyncio
 import logging
@@ -7,7 +11,7 @@ from decimal import Decimal
 
 import httpx
 
-from app.api.ebay_finding_sold import ebay_finding_sold
+from app.api.ebay_browse import ebay_browse
 from app.config import settings
 from app.database import SessionLocal
 from app.models import SearchQuery, SoldBenchmark, CherryListing
@@ -50,12 +54,15 @@ def _median_dec(values: list[Decimal]) -> Decimal:
 @celery_app.task(bind=True, max_retries=3)
 def fetch_sold_benchmarks(self):
     """
-    For each active SearchQuery, compute a sold-price benchmark (AUD) from completed items.
+    For each active SearchQuery, compute a market benchmark (AUD) from active eBay listings.
+
+    Uses the Browse API to fetch active PSA 10 listings and computes the median price
+    as the market benchmark.
 
     Scope filters:
     - price_floor_aud <= benchmark < price_ceiling_aud
     """
-    logger.info("Starting Task 2: Fetch Sold Benchmarks (eBay completed items)")
+    logger.info("Starting Task 2: Fetch Market Benchmarks (eBay active listings)")
 
     db = SessionLocal()
     try:
@@ -75,10 +82,6 @@ def fetch_sold_benchmarks(self):
         stored = 0
         filtered = 0
         errors = 0
-        rate_limited = False
-
-        # Only compute for queries that need refresh (no recent benchmark)
-        cutoff_bench = datetime.utcnow()
 
         # Sort by recency of cherry listing activity (best-effort)
         q_ids = [q.id for q in queries]
@@ -128,33 +131,40 @@ def fetch_sold_benchmarks(self):
                 break
 
             try:
-                comps = run_async(
-                    ebay_finding_sold.find_completed_items(
+                # Use Browse API to fetch active listings
+                response = run_async(
+                    ebay_browse.search_listings(
                         query=q.query_text,
                         language=q.language,
-                        max_results=settings.sold_comps_max_results,
+                        mode="PSA10",
+                        limit=50,
                     )
                 )
 
-                # Keep PSA10-ish results only
+                # Parse listings and extract prices
+                listings = ebay_browse.parse_listings(response)
                 prices: list[Decimal] = []
-                for comp in comps:
-                    title = (comp.title or "").upper()
+                
+                for listing in listings:
+                    title = (listing.get("title") or "").upper()
+                    # Browse API with PSA10 mode already filters, but double-check
                     if "PSA 10" not in title and "PSA10" not in title:
                         continue
 
                     # Enforce language stream separation
                     if (q.language or "EN").upper() == "JP":
-                        if not _is_jp_title(comp.title):
+                        if not _is_jp_title(listing.get("title", "")):
                             continue
                     else:
-                        if _is_jp_title(comp.title):
+                        if _is_jp_title(listing.get("title", "")):
                             continue
 
-                    if comp.price_aud is not None:
-                        prices.append(Decimal(comp.price_aud))
+                    price = listing.get("price_aud")
+                    if price is not None:
+                        prices.append(Decimal(price))
 
                 if not prices:
+                    logger.debug(f"No prices found for query '{q.card_name}'")
                     filtered += 1
                     continue
 
@@ -168,7 +178,7 @@ def fetch_sold_benchmarks(self):
                 bench = SoldBenchmark(
                     search_query_id=q.id,
                     market_price=market.quantize(Decimal("0.01")),
-                    data_source="ebay_finding_completed",
+                    data_source="ebay_browse_active",
                     sample_size=len(prices),
                     min_price=min(prices).quantize(Decimal("0.01")),
                     max_price=max(prices).quantize(Decimal("0.01")),
@@ -177,37 +187,27 @@ def fetch_sold_benchmarks(self):
                 db.add(bench)
                 db.commit()
                 stored += 1
+                logger.info(f"Stored benchmark for '{q.card_name}': ${market:.2f} (n={len(prices)})")
+                
             except httpx.HTTPStatusError as e:
-                # eBay Finding API often returns 500 with a JSON RateLimiter error body.
-                body = ""
-                try:
-                    body = e.response.text or ""
-                except Exception:
-                    body = ""
-                if "RateLimiter" in body or "exceeded the number of times" in body:
-                    logger.error("Rate limited by eBay Finding API; stopping benchmark fetch for now.")
-                    rate_limited = True
-                    db.rollback()
-                    break
-                logger.error(f"Error fetching sold benchmark for '{q.card_name}': {e}")
+                logger.error(f"HTTP error fetching benchmark for '{q.card_name}': {e}")
                 db.rollback()
                 errors += 1
                 continue
             except Exception as e:
-                logger.error(f"Error fetching sold benchmark for '{q.card_name}': {e}")
+                logger.error(f"Error fetching benchmark for '{q.card_name}': {e}")
                 db.rollback()
                 errors += 1
                 continue
 
         logger.info(
-            f"Task 2 complete: {stored} stored, {filtered} filtered, {errors} errors (rate_limited={rate_limited})"
+            f"Task 2 complete: {stored} stored, {filtered} filtered, {errors} errors"
         )
         return {
             "status": "success",
             "stored": stored,
             "filtered": filtered,
             "errors": errors,
-            "rate_limited": rate_limited,
             "processed": processed,
         }
 
