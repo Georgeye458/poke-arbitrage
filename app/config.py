@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     cherry_collection_handle: str = "pokemon-singles"
     cherry_require_in_stock: bool = True
 
+    # Leo Games (Shopify) source
+    leo_base_url: str = "https://www.leogames.com.au"
+    leo_psa_collection_handle: str = "psa-graded-cards"
+    leo_cgc_collection_handle: str = "cgc-graded-cards"
+    leo_require_in_stock: bool = True
+
     # Sold comps (eBay Finding API)
     sold_comps_max_results: int = 50
     sold_benchmark_max_queries_per_run: int = 8

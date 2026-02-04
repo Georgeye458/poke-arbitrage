@@ -1,14 +1,17 @@
 # PokeArbitrage Scanner
 
-A web application that identifies undervalued PSA 10 Pokemon cards on eBay by comparing "Buy It Now" listings against broader market value trends.
+A web application that identifies undervalued PSA 10 and CGC 10 graded Pokemon cards by comparing prices from Australian online stores against eBay sold prices.
 
 ## Features
 
-- 🔍 **Automated Scanning**: Monitors 22 high-value PSA 10 Pokemon cards every 30 minutes
-- 💰 **Smart Filtering**: Focuses on cards under $3,000 AUD for better liquidity
-- 📊 **Market Benchmarks**: Uses eBay Merchandising API for reliable market pricing
+- 🔍 **Multi-Store Scanning**: Monitors graded Pokemon cards from:
+  - Cherry Collectables (PSA 10 + CGC 10)
+  - Leo Games (PSA 10 + CGC 10)
+- 💰 **Smart Filtering**: Focuses on cards between $30-$3,000 AUD for better liquidity
+- 📊 **eBay Sold Benchmarks**: Uses eBay Finding API to get actual sold prices as market benchmarks
 - 🎯 **Arbitrage Detection**: Flags listings priced 15%+ below market value
 - 🌐 **Web Dashboard**: View opportunities through a clean HTML interface
+- 🏷️ **Multi-Grader Support**: Supports both PSA and CGC graded cards
 
 ## Tech Stack
 
@@ -90,10 +93,10 @@ heroku ps:scale web=1 worker=1 beat=1
 │  (Scheduler)    │     └────────┬─────────┘
 └─────────────────┘              │
                                  ▼
-┌─────────────────┐     ┌──────────────────┐
-│  eBay APIs      │◀────│  Celery Worker   │
-│  Browse +       │     │  (3 Tasks)       │
-│  Merchandising  │     └────────┬─────────┘
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  Store APIs     │◀────│  Celery Worker   │────▶│  eBay Finding   │
+│  - Cherry       │     │  (5 Tasks)       │     │  API (Sold)     │
+│  - Leo Games    │     └────────┬─────────┘     └─────────────────┘
 └─────────────────┘              │
                                  ▼
 ┌─────────────────┐     ┌──────────────────┐
@@ -101,6 +104,14 @@ heroku ps:scale web=1 worker=1 beat=1
 │  Web App        │     │   Database       │
 └─────────────────┘     └──────────────────┘
 ```
+
+### Task Pipeline
+
+1. **fetch_cherry_listings** - Scrapes PSA 10 + CGC 10 cards from Cherry Collectables
+2. **fetch_leo_listings** - Scrapes PSA 10 + CGC 10 cards from Leo Games
+3. **fetch_sold_benchmarks** - Gets eBay sold prices for each card/grader combination
+4. **identify_cherry_opportunities** - Compares Cherry prices to eBay sold benchmarks
+5. **identify_leo_opportunities** - Compares Leo Games prices to eBay sold benchmarks
 
 ## License
 

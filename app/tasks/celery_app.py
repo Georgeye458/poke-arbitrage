@@ -31,10 +31,13 @@ celery_app = Celery(
         "app.tasks.scrape_listings",
         "app.tasks.fetch_benchmarks",
         "app.tasks.identify_opportunities",
-        # New Cherry-vs-sold pipeline
+        # Cherry Collectables pipeline
         "app.tasks.fetch_cherry_listings",
         "app.tasks.fetch_sold_benchmarks",
         "app.tasks.identify_cherry_opportunities",
+        # Leo Games pipeline
+        "app.tasks.fetch_leo_listings",
+        "app.tasks.identify_leo_opportunities",
     ],
 )
 
@@ -62,18 +65,32 @@ celery_app.conf.update(**celery_config)
 celery_app.conf.beat_schedule = {}
 if settings.scheduler_enabled:
     celery_app.conf.beat_schedule = {
+        # Cherry Collectables tasks
         "fetch-cherry-listings-every-30-min": {
             "task": "app.tasks.fetch_cherry_listings.fetch_cherry_listings",
             "schedule": settings.task_interval_seconds,
         },
+        # Leo Games tasks
+        "fetch-leo-listings-every-30-min": {
+            "task": "app.tasks.fetch_leo_listings.fetch_leo_listings",
+            "schedule": settings.task_interval_seconds,
+            "options": {"countdown": 30},
+        },
+        # Benchmarks (after store listings are fetched)
         "fetch-sold-benchmarks-every-30-min": {
             "task": "app.tasks.fetch_sold_benchmarks.fetch_sold_benchmarks",
             "schedule": settings.task_interval_seconds,
-            "options": {"countdown": 90},
+            "options": {"countdown": 120},
         },
+        # Opportunity identification (after benchmarks are fetched)
         "identify-cherry-opportunities-every-30-min": {
             "task": "app.tasks.identify_cherry_opportunities.identify_cherry_opportunities",
             "schedule": settings.task_interval_seconds,
-            "options": {"countdown": 180},
+            "options": {"countdown": 210},
+        },
+        "identify-leo-opportunities-every-30-min": {
+            "task": "app.tasks.identify_leo_opportunities.identify_leo_opportunities",
+            "schedule": settings.task_interval_seconds,
+            "options": {"countdown": 240},
         },
     }

@@ -1,4 +1,4 @@
-"""Task 3 (new): Identify discounts of Cherry PSA10 products vs eBay sold benchmarks."""
+"""Task: Identify discounts of Leo Games products vs eBay sold benchmarks."""
 
 import logging
 from datetime import datetime, timedelta
@@ -8,9 +8,9 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import (
     SearchQuery,
-    CherryListing,
+    LeoListing,
     SoldBenchmark,
-    CherryOpportunity,
+    LeoOpportunity,
 )
 from app.tasks.celery_app import celery_app
 
@@ -18,14 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(bind=True, max_retries=3)
-def identify_cherry_opportunities(self, arbitrage_threshold: float = None):
+def identify_leo_opportunities(self, arbitrage_threshold: float = None):
     """
-    For each active CherryListing matched to an in-scope query:
-    - find the latest SoldBenchmark for that query
+    For each active LeoListing:
+    - find the latest SoldBenchmark for that query and grader/grade
     - compute discount vs market
-    - store/update CherryOpportunity
+    - store/update LeoOpportunity
     """
-    logger.info("Starting Task 3: Identify Cherry Opportunities")
+    logger.info("Starting Task: Identify Leo Games Opportunities")
 
     db = SessionLocal()
     try:
@@ -41,16 +41,16 @@ def identify_cherry_opportunities(self, arbitrage_threshold: float = None):
         cutoff_bench = datetime.utcnow() - timedelta(hours=24)
         cutoff_listing = datetime.utcnow() - timedelta(hours=24)
 
-        # Get all active Cherry listings
+        # Get all active Leo listings
         listings = (
-            db.query(CherryListing)
-            .filter(CherryListing.is_active == True)
-            .filter(CherryListing.last_seen_at >= cutoff_listing)
+            db.query(LeoListing)
+            .filter(LeoListing.is_active == True)
+            .filter(LeoListing.last_seen_at >= cutoff_listing)
             .all()
         )
 
         for listing in listings:
-            if settings.cherry_require_in_stock and not listing.in_stock:
+            if settings.leo_require_in_stock and not listing.in_stock:
                 continue
             
             listings_checked += 1
@@ -84,7 +84,7 @@ def identify_cherry_opportunities(self, arbitrage_threshold: float = None):
         db.commit()
 
         logger.info(
-            f"Task 3 complete: {opportunities_found} opportunities, {listings_checked} listings checked"
+            f"Leo Opportunities complete: {opportunities_found} opportunities, {listings_checked} listings checked"
         )
         return {
             "status": "success",
@@ -94,7 +94,7 @@ def identify_cherry_opportunities(self, arbitrage_threshold: float = None):
         }
 
     except Exception as e:
-        logger.error(f"Task 3 failed: {e}")
+        logger.error(f"Leo Opportunities failed: {e}")
         self.retry(exc=e, countdown=60)
     finally:
         db.close()
@@ -103,17 +103,17 @@ def identify_cherry_opportunities(self, arbitrage_threshold: float = None):
 def _create_or_update(
     db,
     query: SearchQuery,
-    listing: CherryListing,
+    listing: LeoListing,
     market_price: Decimal,
     store_price: Decimal,
-) -> CherryOpportunity:
+) -> LeoOpportunity:
     discount = ((market_price - store_price) / market_price) * Decimal("100")
     profit = market_price - store_price
 
     existing = (
-        db.query(CherryOpportunity)
-        .filter(CherryOpportunity.cherry_listing_id == listing.id)
-        .filter(CherryOpportunity.is_active == True)
+        db.query(LeoOpportunity)
+        .filter(LeoOpportunity.leo_listing_id == listing.id)
+        .filter(LeoOpportunity.is_active == True)
         .first()
     )
 
@@ -121,6 +121,8 @@ def _create_or_update(
     if existing:
         existing.card_name = query.card_name
         existing.product_title = listing.title
+        existing.grader = listing.grader
+        existing.grade = listing.grade
         existing.store_price = store_price
         existing.market_price = market_price
         existing.discount_percentage = discount
@@ -131,11 +133,13 @@ def _create_or_update(
         existing.last_verified_at = now
         return existing
 
-    opp = CherryOpportunity(
-        cherry_listing_id=listing.id,
+    opp = LeoOpportunity(
+        leo_listing_id=listing.id,
         search_query_id=query.id,
         card_name=query.card_name,
         product_title=listing.title,
+        grader=listing.grader,
+        grade=listing.grade,
         store_price=store_price,
         market_price=market_price,
         discount_percentage=discount,
@@ -154,22 +158,21 @@ def _create_or_update(
 def _deactivate_stale(db):
     cutoff = datetime.utcnow() - timedelta(hours=6)
     stale = (
-        db.query(CherryOpportunity)
-        .filter(CherryOpportunity.is_active == True)
-        .filter(CherryOpportunity.last_verified_at < cutoff)
+        db.query(LeoOpportunity)
+        .filter(LeoOpportunity.is_active == True)
+        .filter(LeoOpportunity.last_verified_at < cutoff)
         .update({"is_active": False})
     )
     if stale:
-        logger.info(f"Deactivated {stale} stale cherry opportunities")
+        logger.info(f"Deactivated {stale} stale Leo opportunities")
 
     # Deactivate opportunities for listings no longer active
     inactive = (
-        db.query(CherryOpportunity)
-        .filter(CherryOpportunity.is_active == True)
-        .filter(CherryOpportunity.cherry_listing_id == CherryListing.id)
-        .filter(CherryListing.is_active == False)
+        db.query(LeoOpportunity)
+        .filter(LeoOpportunity.is_active == True)
+        .filter(LeoOpportunity.leo_listing_id == LeoListing.id)
+        .filter(LeoListing.is_active == False)
         .update({"is_active": False}, synchronize_session=False)
     )
     if inactive:
-        logger.info(f"Deactivated {inactive} opportunities for inactive listings")
-
+        logger.info(f"Deactivated {inactive} Leo opportunities for inactive listings")

@@ -67,13 +67,18 @@ class EbayFindingSoldAPI:
         self,
         query: str,
         language: str = "EN",
+        grader: str = "PSA",
+        grade: int = 10,
         max_results: int = 50,
     ) -> list[SoldComp]:
         if not settings.ebay_app_id:
             raise RuntimeError("EBAY_APP_ID must be set for Finding API sold comps")
 
         language = (language or "EN").upper()
-        keywords = f"pokemon psa 10 {query}"
+        grader = (grader or "PSA").upper()
+        
+        # Build keywords based on grader
+        keywords = f"pokemon {grader} {grade} {query}"
         if language == "JP":
             keywords = f"{keywords} japanese"
 

@@ -1,7 +1,7 @@
-"""Task 2: Fetch market benchmarks from eBay active listings.
+"""Task 2: Fetch market benchmarks from eBay SOLD/completed items.
 
-Uses the Browse API to fetch active PSA 10 listings and compute median prices
-as the market benchmark. Falls back to Finding API for sold comps if available.
+Uses the Finding API findCompletedItems to fetch actual sold prices
+as the market benchmark. Supports both PSA and CGC graded cards.
 """
 
 import asyncio
@@ -11,10 +11,10 @@ from decimal import Decimal
 
 import httpx
 
-from app.api.ebay_browse import ebay_browse
+from app.api.ebay_finding_sold import ebay_finding_sold, SoldComp
 from app.config import settings
 from app.database import SessionLocal
-from app.models import SearchQuery, SoldBenchmark, CherryListing
+from app.models import SearchQuery, SoldBenchmark, CherryListing, LeoListing
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -51,30 +51,79 @@ def _median_dec(values: list[Decimal]) -> Decimal:
     return (vals[mid - 1] + vals[mid]) / Decimal("2")
 
 
+def _get_grader_grade_combinations(db, query_id: int) -> list[tuple[str, int]]:
+    """Get all unique (grader, grade) combinations for a query from both stores."""
+    combinations = set()
+    
+    # Check Cherry listings
+    cherry_listings = (
+        db.query(CherryListing.grader, CherryListing.grade)
+        .filter(CherryListing.search_query_id == query_id)
+        .filter(CherryListing.is_active == True)
+        .distinct()
+        .all()
+    )
+    for grader, grade in cherry_listings:
+        combinations.add((grader, grade))
+    
+    # Check Leo listings
+    leo_listings = (
+        db.query(LeoListing.grader, LeoListing.grade)
+        .filter(LeoListing.search_query_id == query_id)
+        .filter(LeoListing.is_active == True)
+        .distinct()
+        .all()
+    )
+    for grader, grade in leo_listings:
+        combinations.add((grader, grade))
+    
+    return list(combinations)
+
+
 @celery_app.task(bind=True, max_retries=3)
 def fetch_sold_benchmarks(self):
     """
-    For each active SearchQuery, compute a market benchmark (AUD) from active eBay listings.
+    For each active SearchQuery, compute a market benchmark (AUD) from eBay SOLD items.
 
-    Uses the Browse API to fetch active PSA 10 listings and computes the median price
-    as the market benchmark.
+    Uses the Finding API findCompletedItems to fetch actual sold prices
+    and computes the median as the market benchmark.
+
+    Fetches benchmarks for each (grader, grade) combination found in store listings.
 
     Scope filters:
     - price_floor_aud <= benchmark < price_ceiling_aud
     """
-    logger.info("Starting Task 2: Fetch Market Benchmarks (eBay active listings)")
+    logger.info("Starting Task 2: Fetch Market Benchmarks (eBay SOLD items)")
 
     db = SessionLocal()
     try:
-        # Only compute benchmarks for queries that have active Cherry listings.
-        queries = (
-            db.query(SearchQuery)
-            .join(CherryListing, CherryListing.search_query_id == SearchQuery.id)
-            .filter(SearchQuery.is_active == True)
+        # Only compute benchmarks for queries that have active store listings
+        cherry_query_ids = (
+            db.query(CherryListing.search_query_id)
             .filter(CherryListing.is_active == True)
             .distinct()
             .all()
         )
+        leo_query_ids = (
+            db.query(LeoListing.search_query_id)
+            .filter(LeoListing.is_active == True)
+            .distinct()
+            .all()
+        )
+        
+        query_ids = set([q[0] for q in cherry_query_ids] + [q[0] for q in leo_query_ids])
+        
+        if not query_ids:
+            logger.warning("No active store listings found")
+            return {"status": "no_listings", "processed": 0}
+
+        queries = (
+            db.query(SearchQuery)
+            .filter(SearchQuery.id.in_(query_ids))
+            .filter(SearchQuery.is_active == True)
+            .all()
+        )
+
         if not queries:
             logger.warning("No active search queries found")
             return {"status": "no_queries", "processed": 0}
@@ -83,122 +132,110 @@ def fetch_sold_benchmarks(self):
         filtered = 0
         errors = 0
 
-        # Sort by recency of cherry listing activity (best-effort)
-        q_ids = [q.id for q in queries]
-        recent_listing = (
-            db.query(CherryListing.search_query_id, CherryListing.last_seen_at)
-            .filter(CherryListing.search_query_id.in_(q_ids))
-            .filter(CherryListing.is_active == True)
-            .order_by(CherryListing.last_seen_at.desc())
-            .all()
-        )
-        ordered_ids = []
-        seen = set()
-        for sid, _ts in recent_listing:
-            if sid not in seen:
-                ordered_ids.append(sid)
-                seen.add(sid)
-        for sid in q_ids:
-            if sid not in seen:
-                ordered_ids.append(sid)
-                seen.add(sid)
-
         max_q = int(getattr(settings, "sold_benchmark_max_queries_per_run", 8) or 8)
         min_age = int(getattr(settings, "sold_benchmark_min_age_hours", 24) or 24)
         recent_cutoff = datetime.utcnow().timestamp() - (min_age * 3600)
 
-        # Map id -> query
-        q_by_id = {q.id: q for q in queries}
-
         processed = 0
-        for qid in ordered_ids:
-            q = q_by_id.get(qid)
-            if not q:
-                continue
-
-            # Skip if we have a recent benchmark
-            latest = (
-                db.query(SoldBenchmark)
-                .filter(SoldBenchmark.search_query_id == q.id)
-                .order_by(SoldBenchmark.calculated_at.desc())
-                .first()
-            )
-            if latest and latest.calculated_at and latest.calculated_at.timestamp() >= recent_cutoff:
-                continue
-
-            processed += 1
-            if processed > max_q:
+        for q in queries:
+            if processed >= max_q:
                 break
 
-            try:
-                # Use Browse API to fetch active listings
-                response = run_async(
-                    ebay_browse.search_listings(
-                        query=q.query_text,
-                        language=q.language,
-                        mode="PSA10",
-                        limit=50,
-                    )
-                )
+            # Get all grader/grade combinations for this query
+            combinations = _get_grader_grade_combinations(db, q.id)
+            if not combinations:
+                continue
 
-                # Parse listings and extract prices
-                listings = ebay_browse.parse_listings(response)
-                prices: list[Decimal] = []
-                
-                for listing in listings:
-                    title = (listing.get("title") or "").upper()
-                    # Browse API with PSA10 mode already filters, but double-check
-                    if "PSA 10" not in title and "PSA10" not in title:
+            for grader, grade in combinations:
+                # Skip if we have a recent benchmark for this specific grader/grade
+                # Note: Current SoldBenchmark doesn't store grader/grade, so we check by query only
+                latest = (
+                    db.query(SoldBenchmark)
+                    .filter(SoldBenchmark.search_query_id == q.id)
+                    .filter(SoldBenchmark.data_source == f"ebay_finding_sold_{grader}_{grade}")
+                    .order_by(SoldBenchmark.calculated_at.desc())
+                    .first()
+                )
+                if latest and latest.calculated_at and latest.calculated_at.timestamp() >= recent_cutoff:
+                    continue
+
+                processed += 1
+                if processed > max_q:
+                    break
+
+                try:
+                    # Fetch sold comps from eBay Finding API
+                    comps: list[SoldComp] = run_async(
+                        ebay_finding_sold.find_completed_items(
+                            query=q.query_text,
+                            language=q.language,
+                            grader=grader,
+                            grade=grade,
+                            max_results=settings.sold_comps_max_results,
+                        )
+                    )
+
+                    # Filter comps by language and grading
+                    prices: list[Decimal] = []
+                    grader_upper = grader.upper()
+                    
+                    for comp in comps:
+                        title = (comp.title or "").upper()
+                        
+                        # Verify grader in title
+                        if grader_upper == "PSA":
+                            if f"PSA {grade}" not in title and f"PSA{grade}" not in title:
+                                continue
+                        elif grader_upper == "CGC":
+                            if f"CGC {grade}" not in title and f"CGC{grade}" not in title and f"CGC PRISTINE {grade}" not in title:
+                                continue
+                        
+                        # Enforce language stream separation
+                        if (q.language or "EN").upper() == "JP":
+                            if not _is_jp_title(comp.title):
+                                continue
+                        else:
+                            if _is_jp_title(comp.title):
+                                continue
+
+                        prices.append(comp.price_aud)
+
+                    if not prices:
+                        logger.debug(f"No sold prices found for '{q.card_name}' {grader} {grade}")
+                        filtered += 1
                         continue
 
-                    # Enforce language stream separation
-                    if (q.language or "EN").upper() == "JP":
-                        if not _is_jp_title(listing.get("title", "")):
-                            continue
-                    else:
-                        if _is_jp_title(listing.get("title", "")):
-                            continue
+                    market = _median_dec(prices)
+                    if market >= Decimal(str(settings.price_ceiling_aud)) or market < Decimal(
+                        str(settings.price_floor_aud)
+                    ):
+                        filtered += 1
+                        continue
 
-                    price = listing.get("price_aud")
-                    if price is not None:
-                        prices.append(Decimal(price))
+                    bench = SoldBenchmark(
+                        search_query_id=q.id,
+                        market_price=market.quantize(Decimal("0.01")),
+                        data_source=f"ebay_finding_sold_{grader}_{grade}",
+                        sample_size=len(prices),
+                        min_price=min(prices).quantize(Decimal("0.01")),
+                        max_price=max(prices).quantize(Decimal("0.01")),
+                        calculated_at=datetime.utcnow(),
+                    )
+                    db.add(bench)
+                    db.commit()
+                    stored += 1
+                    logger.info(f"Stored benchmark for '{q.card_name}' {grader} {grade}: ${market:.2f} (n={len(prices)})")
 
-                if not prices:
-                    logger.debug(f"No prices found for query '{q.card_name}'")
-                    filtered += 1
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"HTTP error fetching benchmark for '{q.card_name}' {grader} {grade}: {e}")
+                    db.rollback()
+                    errors += 1
                     continue
-
-                market = _median_dec(prices)
-                if market >= Decimal(str(settings.price_ceiling_aud)) or market < Decimal(
-                    str(settings.price_floor_aud)
-                ):
-                    filtered += 1
+                except Exception as e:
+                    logger.error(f"Error fetching benchmark for '{q.card_name}' {grader} {grade}: {e}")
+                    db.rollback()
+                    errors += 1
                     continue
-
-                bench = SoldBenchmark(
-                    search_query_id=q.id,
-                    market_price=market.quantize(Decimal("0.01")),
-                    data_source="ebay_browse_active",
-                    sample_size=len(prices),
-                    min_price=min(prices).quantize(Decimal("0.01")),
-                    max_price=max(prices).quantize(Decimal("0.01")),
-                    calculated_at=datetime.utcnow(),
-                )
-                db.add(bench)
-                db.commit()
-                stored += 1
-                logger.info(f"Stored benchmark for '{q.card_name}': ${market:.2f} (n={len(prices)})")
-                
-            except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error fetching benchmark for '{q.card_name}': {e}")
-                db.rollback()
-                errors += 1
-                continue
-            except Exception as e:
-                logger.error(f"Error fetching benchmark for '{q.card_name}': {e}")
-                db.rollback()
-                errors += 1
-                continue
 
         logger.info(
             f"Task 2 complete: {stored} stored, {filtered} filtered, {errors} errors"
@@ -216,4 +253,3 @@ def fetch_sold_benchmarks(self):
         self.retry(exc=e, countdown=60)
     finally:
         db.close()
-

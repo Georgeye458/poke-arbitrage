@@ -7,6 +7,8 @@ from app.models.arbitrage import ArbitrageOpportunity
 from app.models.cherry_listing import CherryListing
 from app.models.sold_benchmark import SoldBenchmark
 from app.models.cherry_opportunity import CherryOpportunity
+from app.models.leo_listing import LeoListing
+from app.models.leo_opportunity import LeoOpportunity
 
 __all__ = [
     "SearchQuery",
@@ -16,4 +18,6 @@ __all__ = [
     "CherryListing",
     "SoldBenchmark",
     "CherryOpportunity",
+    "LeoListing",
+    "LeoOpportunity",
 ]

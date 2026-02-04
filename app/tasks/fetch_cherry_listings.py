@@ -44,6 +44,23 @@ def _is_psa10(title: str, tags: list[str]) -> bool:
     return False
 
 
+def _is_cgc10(title: str, tags: list[str]) -> bool:
+    """Check if the card is CGC 10 graded."""
+    t = (title or "").upper()
+    if "CGC 10" in t or "CGC10" in t or "CGC PRISTINE 10" in t:
+        return True
+    return False
+
+
+def _detect_grading(title: str, tags: list[str]) -> tuple[str | None, int | None]:
+    """Detect grader and grade from title/tags. Returns (grader, grade) or (None, None)."""
+    if _is_psa10(title, tags):
+        return "PSA", 10
+    if _is_cgc10(title, tags):
+        return "CGC", 10
+    return None, None
+
+
 def _is_jp_title(title: str) -> bool:
     t = (title or "").upper()
     return (
@@ -140,7 +157,10 @@ def fetch_cherry_listings(self):
             for prod in batch:
                 if settings.cherry_require_in_stock and not prod.in_stock:
                     continue
-                if not _is_psa10(prod.title, prod.tags):
+                
+                # Detect grading (PSA 10 or CGC 10)
+                grader, grade = _detect_grading(prod.title, prod.tags)
+                if not grader or grade != 10:
                     continue
 
                 lang = "JP" if _is_jp_title(prod.title) else "EN"
@@ -184,8 +204,8 @@ def fetch_cherry_listings(self):
                     existing.price_aud = prod.price_aud
                     existing.in_stock = prod.in_stock
                     existing.language = lang
-                    existing.grader = "PSA"
-                    existing.grade = 10
+                    existing.grader = grader
+                    existing.grade = grade
                     existing.last_seen_at = now
                     if not existing.is_active:
                         existing.is_active = True
@@ -204,8 +224,8 @@ def fetch_cherry_listings(self):
                             price_aud=Decimal(prod.price_aud),
                             in_stock=prod.in_stock,
                             language=lang,
-                            grader="PSA",
-                            grade=10,
+                            grader=grader,
+                            grade=grade,
                             is_active=True,
                             scraped_at=now,
                             last_seen_at=now,
