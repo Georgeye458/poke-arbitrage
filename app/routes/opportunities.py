@@ -1,6 +1,7 @@
 """Opportunities routes for viewing arbitrage opportunities."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
@@ -8,13 +9,16 @@ from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.database import get_db
-from app.models import CherryOpportunity
+from app.models import CherryOpportunity, CherryListing, LeoListing, SoldBenchmark, SearchQuery
 from app.config import settings
 from app.tasks.fetch_cherry_listings import fetch_cherry_listings
+from app.tasks.fetch_leo_listings import fetch_leo_listings
 from app.tasks.fetch_sold_benchmarks import fetch_sold_benchmarks
 from app.tasks.identify_cherry_opportunities import identify_cherry_opportunities
+from app.tasks.identify_leo_opportunities import identify_leo_opportunities
 from app.tasks.celery_app import celery_app
 
 router = APIRouter()
@@ -177,3 +181,290 @@ async def task_status(task_id: str):
         except Exception:
             payload["result"] = None
     return payload
+
+
+def _get_latest_benchmark(db: Session, search_query_id: int, grader: str, grade: int) -> Optional[SoldBenchmark]:
+    """Get the most recent benchmark for a specific query/grader/grade combination."""
+    data_source = f"ebay_browse_{grader}_{grade}"
+    return (
+        db.query(SoldBenchmark)
+        .filter(SoldBenchmark.search_query_id == search_query_id)
+        .filter(SoldBenchmark.data_source == data_source)
+        .order_by(SoldBenchmark.calculated_at.desc())
+        .first()
+    )
+
+
+@router.get("/listings", response_class=HTMLResponse)
+async def view_all_listings(
+    request: Request,
+    db: Session = Depends(get_db),
+    sort: str = "discount",
+    store: str = "all",
+    in_stock_only: bool = True,
+):
+    """
+    View ALL listings from both stores with their eBay market comparison.
+    Shows all cards regardless of discount threshold.
+    
+    Args:
+        sort: Sort by 'discount', 'price', 'market', or 'name'
+        store: Filter by 'all', 'cherry', or 'leo'
+        in_stock_only: Only show in-stock items
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=48)
+    listings_data = []
+    
+    # Get Cherry listings
+    if store in ("all", "cherry"):
+        cherry_query = (
+            db.query(CherryListing)
+            .filter(CherryListing.is_active == True)
+            .filter(CherryListing.last_seen_at >= cutoff)
+        )
+        if in_stock_only:
+            cherry_query = cherry_query.filter(CherryListing.in_stock == True)
+        
+        cherry_listings = cherry_query.all()
+        
+        for listing in cherry_listings:
+            query = db.query(SearchQuery).filter(SearchQuery.id == listing.search_query_id).first()
+            benchmark = _get_latest_benchmark(db, listing.search_query_id, listing.grader, listing.grade)
+            
+            store_price = Decimal(listing.price_aud)
+            market_price = Decimal(benchmark.market_price) if benchmark else None
+            
+            if market_price and market_price > 0:
+                discount_pct = ((market_price - store_price) / market_price) * Decimal("100")
+                potential_profit = market_price - store_price
+            else:
+                discount_pct = None
+                potential_profit = None
+            
+            listings_data.append({
+                "id": listing.id,
+                "store": "Cherry",
+                "store_color": "#ff6b6b",
+                "card_name": query.card_name if query else "Unknown",
+                "product_title": listing.title,
+                "grader": listing.grader,
+                "grade": listing.grade,
+                "store_price": float(store_price),
+                "market_price": float(market_price) if market_price else None,
+                "discount_percentage": float(discount_pct) if discount_pct is not None else None,
+                "potential_profit": float(potential_profit) if potential_profit is not None else None,
+                "product_url": listing.product_url,
+                "image_url": listing.image_url,
+                "in_stock": listing.in_stock,
+                "benchmark_sample_size": benchmark.sample_size if benchmark else None,
+                "benchmark_age_hours": int((datetime.utcnow() - benchmark.calculated_at).total_seconds() / 3600) if benchmark else None,
+            })
+    
+    # Get Leo listings
+    if store in ("all", "leo"):
+        leo_query = (
+            db.query(LeoListing)
+            .filter(LeoListing.is_active == True)
+            .filter(LeoListing.last_seen_at >= cutoff)
+        )
+        if in_stock_only:
+            leo_query = leo_query.filter(LeoListing.in_stock == True)
+        
+        leo_listings = leo_query.all()
+        
+        for listing in leo_listings:
+            query = db.query(SearchQuery).filter(SearchQuery.id == listing.search_query_id).first()
+            benchmark = _get_latest_benchmark(db, listing.search_query_id, listing.grader, listing.grade)
+            
+            store_price = Decimal(listing.price_aud)
+            market_price = Decimal(benchmark.market_price) if benchmark else None
+            
+            if market_price and market_price > 0:
+                discount_pct = ((market_price - store_price) / market_price) * Decimal("100")
+                potential_profit = market_price - store_price
+            else:
+                discount_pct = None
+                potential_profit = None
+            
+            listings_data.append({
+                "id": listing.id,
+                "store": "Leo Games",
+                "store_color": "#4ecdc4",
+                "card_name": query.card_name if query else "Unknown",
+                "product_title": listing.title,
+                "grader": listing.grader,
+                "grade": listing.grade,
+                "store_price": float(store_price),
+                "market_price": float(market_price) if market_price else None,
+                "discount_percentage": float(discount_pct) if discount_pct is not None else None,
+                "potential_profit": float(potential_profit) if potential_profit is not None else None,
+                "product_url": listing.product_url,
+                "image_url": listing.image_url,
+                "in_stock": listing.in_stock,
+                "benchmark_sample_size": benchmark.sample_size if benchmark else None,
+                "benchmark_age_hours": int((datetime.utcnow() - benchmark.calculated_at).total_seconds() / 3600) if benchmark else None,
+            })
+    
+    # Sort listings
+    if sort == "discount":
+        # Sort by discount descending, None values at end
+        listings_data.sort(key=lambda x: (x["discount_percentage"] is None, -(x["discount_percentage"] or 0)))
+    elif sort == "price":
+        listings_data.sort(key=lambda x: x["store_price"])
+    elif sort == "market":
+        listings_data.sort(key=lambda x: (x["market_price"] is None, -(x["market_price"] or 0)))
+    elif sort == "name":
+        listings_data.sort(key=lambda x: x["card_name"].lower())
+    
+    # Calculate stats
+    with_benchmark = [l for l in listings_data if l["market_price"] is not None]
+    without_benchmark = [l for l in listings_data if l["market_price"] is None]
+    underpriced = [l for l in with_benchmark if l["discount_percentage"] and l["discount_percentage"] > 0]
+    overpriced = [l for l in with_benchmark if l["discount_percentage"] and l["discount_percentage"] < 0]
+    
+    stats = {
+        "total": len(listings_data),
+        "with_benchmark": len(with_benchmark),
+        "without_benchmark": len(without_benchmark),
+        "underpriced": len(underpriced),
+        "overpriced": len(overpriced),
+        "best_discount": max((l["discount_percentage"] for l in underpriced), default=0),
+        "best_profit": max((l["potential_profit"] for l in underpriced), default=0),
+    }
+    
+    return templates.TemplateResponse(
+        "listings.html",
+        {
+            "request": request,
+            "listings": listings_data,
+            "stats": stats,
+            "sort": sort,
+            "store": store,
+            "in_stock_only": in_stock_only,
+            "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        },
+    )
+
+
+@router.get("/api/listings")
+async def get_all_listings_json(
+    db: Session = Depends(get_db),
+    store: str = "all",
+    in_stock_only: bool = True,
+    limit: int = 100,
+):
+    """Get all listings with market comparisons as JSON."""
+    # Reuse the logic from view_all_listings but return JSON
+    cutoff = datetime.utcnow() - timedelta(hours=48)
+    listings_data = []
+    
+    if store in ("all", "cherry"):
+        cherry_query = (
+            db.query(CherryListing)
+            .filter(CherryListing.is_active == True)
+            .filter(CherryListing.last_seen_at >= cutoff)
+        )
+        if in_stock_only:
+            cherry_query = cherry_query.filter(CherryListing.in_stock == True)
+        
+        for listing in cherry_query.limit(limit).all():
+            query = db.query(SearchQuery).filter(SearchQuery.id == listing.search_query_id).first()
+            benchmark = _get_latest_benchmark(db, listing.search_query_id, listing.grader, listing.grade)
+            
+            store_price = Decimal(listing.price_aud)
+            market_price = Decimal(benchmark.market_price) if benchmark else None
+            
+            if market_price and market_price > 0:
+                discount_pct = float(((market_price - store_price) / market_price) * Decimal("100"))
+                potential_profit = float(market_price - store_price)
+            else:
+                discount_pct = None
+                potential_profit = None
+            
+            listings_data.append({
+                "id": listing.id,
+                "store": "cherry",
+                "card_name": query.card_name if query else "Unknown",
+                "product_title": listing.title,
+                "grader": listing.grader,
+                "grade": listing.grade,
+                "store_price": float(store_price),
+                "market_price": float(market_price) if market_price else None,
+                "discount_percentage": discount_pct,
+                "potential_profit": potential_profit,
+                "product_url": listing.product_url,
+                "image_url": listing.image_url,
+                "in_stock": listing.in_stock,
+            })
+    
+    if store in ("all", "leo"):
+        leo_query = (
+            db.query(LeoListing)
+            .filter(LeoListing.is_active == True)
+            .filter(LeoListing.last_seen_at >= cutoff)
+        )
+        if in_stock_only:
+            leo_query = leo_query.filter(LeoListing.in_stock == True)
+        
+        for listing in leo_query.limit(limit).all():
+            query = db.query(SearchQuery).filter(SearchQuery.id == listing.search_query_id).first()
+            benchmark = _get_latest_benchmark(db, listing.search_query_id, listing.grader, listing.grade)
+            
+            store_price = Decimal(listing.price_aud)
+            market_price = Decimal(benchmark.market_price) if benchmark else None
+            
+            if market_price and market_price > 0:
+                discount_pct = float(((market_price - store_price) / market_price) * Decimal("100"))
+                potential_profit = float(market_price - store_price)
+            else:
+                discount_pct = None
+                potential_profit = None
+            
+            listings_data.append({
+                "id": listing.id,
+                "store": "leo",
+                "card_name": query.card_name if query else "Unknown",
+                "product_title": listing.title,
+                "grader": listing.grader,
+                "grade": listing.grade,
+                "store_price": float(store_price),
+                "market_price": float(market_price) if market_price else None,
+                "discount_percentage": discount_pct,
+                "potential_profit": potential_profit,
+                "product_url": listing.product_url,
+                "image_url": listing.image_url,
+                "in_stock": listing.in_stock,
+            })
+    
+    return {
+        "count": len(listings_data),
+        "listings": listings_data,
+    }
+
+
+class RunFullScanRequest(BaseModel):
+    """Request to run a full scan of both stores."""
+    in_stock_only: bool | None = Field(default=None)
+
+
+@router.post("/api/run-full-scan")
+async def run_full_scan_now(payload: RunFullScanRequest | None = None):
+    """Trigger a full scan of both Cherry and Leo stores."""
+    # Run all tasks with appropriate countdowns
+    cherry_scrape = fetch_cherry_listings.apply_async()
+    leo_scrape = fetch_leo_listings.apply_async(countdown=15)
+    benchmarks = fetch_sold_benchmarks.apply_async(countdown=120)
+    cherry_score = identify_cherry_opportunities.apply_async(countdown=210)
+    leo_score = identify_leo_opportunities.apply_async(countdown=240)
+
+    return {
+        "status": "queued",
+        "queued_at": datetime.utcnow().isoformat(),
+        "tasks": {
+            "fetch_cherry_listings": cherry_scrape.id,
+            "fetch_leo_listings": leo_scrape.id,
+            "fetch_sold_benchmarks": benchmarks.id,
+            "identify_cherry_opportunities": cherry_score.id,
+            "identify_leo_opportunities": leo_score.id,
+        },
+    }
