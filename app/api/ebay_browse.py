@@ -26,14 +26,20 @@ class EbayBrowseAPI:
         query: str,
         language: str = "EN",
         mode: str = "PSA10",
+        grader: str = "PSA",
+        grade: int = 10,
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
         """
-        Search for PSA 10 Pokemon card listings.
+        Search for graded Pokemon card listings.
         
         Args:
-            query: Search query (e.g., "psa 10 charizard base set")
+            query: Search query (e.g., "charizard base set")
+            language: EN or JP
+            mode: PSA10, CGC10, GRADED, or ALL
+            grader: PSA, CGC, or other grading company
+            grade: Grade value (10, 9, etc.)
             limit: Maximum results to return (max 200)
             offset: Pagination offset
             
@@ -55,6 +61,7 @@ class EbayBrowseAPI:
             )
         
         mode = (mode or "PSA10").upper()
+        grader = (grader or "PSA").upper()
 
         # Build search parameters
         language_value = "English" if (language or "EN").upper() == "EN" else "Japanese"
@@ -64,25 +71,39 @@ class EbayBrowseAPI:
             f"Language:{{{language_value}}}",
         ]
 
-        # Mode:
-        # - PSA10: strict PSA graded 10 via aspects
-        # - ALL: do not constrain by grade/grader (still keeps Language split)
+        # Determine query prefix based on grader
+        query_prefix = ""
+        
+        # Mode handling:
+        # - PSA10: strict PSA graded 10 via aspects (legacy)
+        # - CGC10: strict CGC graded 10
+        # - GRADED: use grader/grade params
+        # - ALL: do not constrain by grade/grader
         if mode == "PSA10":
-            # Prefer structured filters (aspects) over title parsing.
-            # Verified via fieldgroups=ASPECT_REFINEMENTS that these exist for 183454.
-            if settings.require_psa10_graded:
-                aspect_parts.append("Graded:{Yes}")
-                aspect_parts.append("Grade:{10}")
-            if settings.require_professional_grader_psa:
-                aspect_parts.append("Professional Grader:{Professional Sports Authenticator (PSA)}")
+            grader = "PSA"
+            grade = 10
+            
+        if mode in ("PSA10", "CGC10", "GRADED"):
+            aspect_parts.append("Graded:{Yes}")
+            aspect_parts.append(f"Grade:{{{grade}}}")
+            
+            # Map grader to eBay's Professional Grader aspect values
+            grader_map = {
+                "PSA": "Professional Sports Authenticator (PSA)",
+                "CGC": "Certified Guaranty Company (CGC)",
+                "BGS": "Beckett Grading Services (BGS)",
+            }
+            if grader in grader_map:
+                aspect_parts.append(f"Professional Grader:{{{grader_map[grader]}}}")
+            
+            query_prefix = f"{grader} {grade} "
 
         params = {
-            "q": f"psa 10 {query}" if mode == "PSA10" else f"{query}",
+            "q": f"{query_prefix}{query}",
             "category_ids": self.POKEMON_CATEGORY_ID,
-            # PSA graded cards are often "USED" – do not constrain condition.
+            # Graded cards are often "USED" – do not constrain condition.
             "filter": "buyingOptions:{FIXED_PRICE}",
             # Best practice: use aspect_filter to separate EN vs JP
-            # (Aspect names/values vary by category, but Language is common for cards.)
             "aspect_filter": ",".join(aspect_parts),
             "sort": "price",
             "limit": min(limit, 200),

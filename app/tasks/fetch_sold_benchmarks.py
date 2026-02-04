@@ -1,6 +1,6 @@
-"""Task 2: Fetch market benchmarks from eBay SOLD/completed items.
+"""Task 2: Fetch market benchmarks from eBay active listings.
 
-Uses the Finding API findCompletedItems to fetch actual sold prices
+Uses the Browse API to fetch active graded card listings and compute median prices
 as the market benchmark. Supports both PSA and CGC graded cards.
 """
 
@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import httpx
 
-from app.api.ebay_finding_sold import ebay_finding_sold, SoldComp
+from app.api.ebay_browse import ebay_browse
 from app.config import settings
 from app.database import SessionLocal
 from app.models import SearchQuery, SoldBenchmark, CherryListing, LeoListing
@@ -83,17 +83,17 @@ def _get_grader_grade_combinations(db, query_id: int) -> list[tuple[str, int]]:
 @celery_app.task(bind=True, max_retries=3)
 def fetch_sold_benchmarks(self):
     """
-    For each active SearchQuery, compute a market benchmark (AUD) from eBay SOLD items.
+    For each active SearchQuery, compute a market benchmark (AUD) from eBay active listings.
 
-    Uses the Finding API findCompletedItems to fetch actual sold prices
-    and computes the median as the market benchmark.
+    Uses the Browse API to fetch active graded card listings and computes the median price
+    as the market benchmark.
 
     Fetches benchmarks for each (grader, grade) combination found in store listings.
 
     Scope filters:
     - price_floor_aud <= benchmark < price_ceiling_aud
     """
-    logger.info("Starting Task 2: Fetch Market Benchmarks (eBay SOLD items)")
+    logger.info("Starting Task 2: Fetch Market Benchmarks (eBay Browse API)")
 
     db = SessionLocal()
     try:
@@ -148,11 +148,11 @@ def fetch_sold_benchmarks(self):
 
             for grader, grade in combinations:
                 # Skip if we have a recent benchmark for this specific grader/grade
-                # Note: Current SoldBenchmark doesn't store grader/grade, so we check by query only
+                data_source = f"ebay_browse_{grader}_{grade}"
                 latest = (
                     db.query(SoldBenchmark)
                     .filter(SoldBenchmark.search_query_id == q.id)
-                    .filter(SoldBenchmark.data_source == f"ebay_finding_sold_{grader}_{grade}")
+                    .filter(SoldBenchmark.data_source == data_source)
                     .order_by(SoldBenchmark.calculated_at.desc())
                     .first()
                 )
@@ -164,23 +164,25 @@ def fetch_sold_benchmarks(self):
                     break
 
                 try:
-                    # Fetch sold comps from eBay Finding API
-                    comps: list[SoldComp] = run_async(
-                        ebay_finding_sold.find_completed_items(
+                    # Fetch active listings from eBay Browse API
+                    response = run_async(
+                        ebay_browse.search_listings(
                             query=q.query_text,
                             language=q.language,
+                            mode="GRADED",
                             grader=grader,
                             grade=grade,
-                            max_results=settings.sold_comps_max_results,
+                            limit=50,
                         )
                     )
 
-                    # Filter comps by language and grading
+                    # Parse listings and extract prices
+                    listings = ebay_browse.parse_listings(response)
                     prices: list[Decimal] = []
                     grader_upper = grader.upper()
                     
-                    for comp in comps:
-                        title = (comp.title or "").upper()
+                    for listing in listings:
+                        title = (listing.get("title") or "").upper()
                         
                         # Verify grader in title
                         if grader_upper == "PSA":
@@ -192,16 +194,18 @@ def fetch_sold_benchmarks(self):
                         
                         # Enforce language stream separation
                         if (q.language or "EN").upper() == "JP":
-                            if not _is_jp_title(comp.title):
+                            if not _is_jp_title(listing.get("title", "")):
                                 continue
                         else:
-                            if _is_jp_title(comp.title):
+                            if _is_jp_title(listing.get("title", "")):
                                 continue
 
-                        prices.append(comp.price_aud)
+                        price = listing.get("price_aud")
+                        if price is not None:
+                            prices.append(Decimal(price))
 
                     if not prices:
-                        logger.debug(f"No sold prices found for '{q.card_name}' {grader} {grade}")
+                        logger.debug(f"No prices found for '{q.card_name}' {grader} {grade}")
                         filtered += 1
                         continue
 
@@ -215,7 +219,7 @@ def fetch_sold_benchmarks(self):
                     bench = SoldBenchmark(
                         search_query_id=q.id,
                         market_price=market.quantize(Decimal("0.01")),
-                        data_source=f"ebay_finding_sold_{grader}_{grade}",
+                        data_source=data_source,
                         sample_size=len(prices),
                         min_price=min(prices).quantize(Decimal("0.01")),
                         max_price=max(prices).quantize(Decimal("0.01")),

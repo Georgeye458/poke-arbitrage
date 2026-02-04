@@ -56,7 +56,7 @@ def identify_cherry_opportunities(self, arbitrage_threshold: float = None):
             listings_checked += 1
             
             # Find benchmark for this specific grader/grade combination
-            data_source = f"ebay_finding_sold_{listing.grader}_{listing.grade}"
+            data_source = f"ebay_browse_{listing.grader}_{listing.grade}"
             latest = (
                 db.query(SoldBenchmark)
                 .filter(SoldBenchmark.search_query_id == listing.search_query_id)
