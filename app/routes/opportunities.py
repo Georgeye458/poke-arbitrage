@@ -150,8 +150,9 @@ async def run_scan_now(payload: RunScanRequest | None = None):
         pass
 
     # Run sequentially via countdowns (simple + reliable)
+    # Use force_all=True to process all queries without rate limits
     scrape = fetch_cherry_listings.apply_async()
-    benchmarks = fetch_sold_benchmarks.apply_async(countdown=90)
+    benchmarks = fetch_sold_benchmarks.apply_async(kwargs={"force_all": True}, countdown=90)
     score = identify_cherry_opportunities.apply_async(
         kwargs={"arbitrage_threshold": threshold},
         countdown=180,
@@ -451,9 +452,10 @@ class RunFullScanRequest(BaseModel):
 async def run_full_scan_now(payload: RunFullScanRequest | None = None):
     """Trigger a full scan of both Cherry and Leo stores."""
     # Run all tasks with appropriate countdowns
+    # Use force_all=True to process all queries without rate limits
     cherry_scrape = fetch_cherry_listings.apply_async()
     leo_scrape = fetch_leo_listings.apply_async(countdown=15)
-    benchmarks = fetch_sold_benchmarks.apply_async(countdown=120)
+    benchmarks = fetch_sold_benchmarks.apply_async(kwargs={"force_all": True}, countdown=120)
     cherry_score = identify_cherry_opportunities.apply_async(countdown=210)
     leo_score = identify_leo_opportunities.apply_async(countdown=240)
 

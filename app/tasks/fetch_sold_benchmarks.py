@@ -81,7 +81,7 @@ def _get_grader_grade_combinations(db, query_id: int) -> list[tuple[str, int]]:
 
 
 @celery_app.task(bind=True, max_retries=3)
-def fetch_sold_benchmarks(self):
+def fetch_sold_benchmarks(self, force_all: bool = False):
     """
     For each active SearchQuery, compute a market benchmark (AUD) from eBay active listings.
 
@@ -90,10 +90,13 @@ def fetch_sold_benchmarks(self):
 
     Fetches benchmarks for each (grader, grade) combination found in store listings.
 
+    Args:
+        force_all: If True, process all queries without limits (for manual scans)
+
     Scope filters:
     - price_floor_aud <= benchmark < price_ceiling_aud
     """
-    logger.info("Starting Task 2: Fetch Market Benchmarks (eBay Browse API)")
+    logger.info(f"Starting Task 2: Fetch Market Benchmarks (eBay Browse API) [force_all={force_all}]")
 
     db = SessionLocal()
     try:
@@ -131,9 +134,12 @@ def fetch_sold_benchmarks(self):
         stored = 0
         filtered = 0
         errors = 0
+        no_results = 0
 
-        max_q = int(getattr(settings, "sold_benchmark_max_queries_per_run", 8) or 8)
-        min_age = int(getattr(settings, "sold_benchmark_min_age_hours", 24) or 24)
+        # For manual scans (force_all), process many more queries
+        max_q = 200 if force_all else int(getattr(settings, "sold_benchmark_max_queries_per_run", 8) or 8)
+        # For force_all, don't skip recent benchmarks
+        min_age = 0 if force_all else int(getattr(settings, "sold_benchmark_min_age_hours", 24) or 24)
         recent_cutoff = datetime.utcnow().timestamp() - (min_age * 3600)
 
         processed = 0
@@ -209,8 +215,8 @@ def fetch_sold_benchmarks(self):
                             prices.append(Decimal(price))
 
                     if not prices:
-                        logger.debug(f"No prices found for '{q.card_name}' {grader} {grade}")
-                        filtered += 1
+                        logger.warning(f"No eBay results for '{q.card_name}' {grader} {grade} (search: '{search_query[:50]}...')")
+                        no_results += 1
                         continue
 
                     market = _median_dec(prices)
@@ -246,12 +252,13 @@ def fetch_sold_benchmarks(self):
                     continue
 
         logger.info(
-            f"Task 2 complete: {stored} stored, {filtered} filtered, {errors} errors"
+            f"Task 2 complete: {stored} stored, {filtered} filtered, {no_results} no_results, {errors} errors"
         )
         return {
             "status": "success",
             "stored": stored,
             "filtered": filtered,
+            "no_results": no_results,
             "errors": errors,
             "processed": processed,
         }
