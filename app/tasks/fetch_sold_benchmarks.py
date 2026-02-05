@@ -164,10 +164,14 @@ def fetch_sold_benchmarks(self):
                     break
 
                 try:
+                    # Use card_name for eBay search (includes card number for better matching)
+                    # Fall back to query_text if card_name is empty
+                    search_query = q.card_name if q.card_name else q.query_text
+                    
                     # Fetch active listings from eBay Browse API
                     response = run_async(
                         ebay_browse.search_listings(
-                            query=q.query_text,
+                            query=search_query,
                             language=q.language,
                             mode="GRADED",
                             grader=grader,

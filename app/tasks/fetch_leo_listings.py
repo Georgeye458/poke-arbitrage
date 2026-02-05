@@ -51,7 +51,8 @@ def _is_jp_title(title: str) -> bool:
 def _derive_query_from_title(title: str, grader: str) -> tuple[str, str]:
     """Derive (query_text, card_name) from a Leo Games product title.
 
-    We strip grading + language noise but KEEP the card number for reliable eBay matching.
+    query_text: normalized for internal matching/deduplication
+    card_name: preserved with card number for eBay searching
     """
     t = (title or "").strip()
     u = t.upper()
@@ -72,53 +73,17 @@ def _derive_query_from_title(title: str, grader: str) -> tuple[str, str]:
     # Remove CGC grade patterns like "CGC 10" / "CGC PRISTINE 10" / "CGC 9.5"
     t = re.sub(r"\bCGC\s*(?:PRISTINE\s*)?\d+(?:\.\d+)?\b", "", t, flags=re.IGNORECASE).strip()
 
-    # Remove trailing inventory/SKU numbers (often at end, 3+ digits)
-    t = re.sub(r"\s+\d{3,}$", "", t).strip()
+    # Remove trailing inventory numbers (often at end)
+    t = re.sub(r"\s+\d{2,}$", "", t).strip()
 
-    # Extract card number pattern (e.g., "195a/214", "123/456") - we want to KEEP this
-    card_number_match = re.search(r"\b(\d{1,4}[a-z]?\s*/\s*\d{1,4})\b", t, re.IGNORECASE)
-    card_number = card_number_match.group(1).replace(" ", "") if card_number_match else ""
-    
-    # Also check for #123 style numbers
-    if not card_number:
-        hash_match = re.search(r"#(\d+)", t)
-        if hash_match:
-            card_number = hash_match.group(1)
-
-    # Remove set name variations that cause mismatches (keep Pokemon name + card number)
-    set_noise = [
-        "full art", "half art", "secret rare", "ultra rare", "holo rare",
-        "reverse holo", "promo", "unbroken bonds", "cosmic eclipse", 
-        "vivid voltage", "evolving skies", "brilliant stars", "astral radiance",
-        "lost origin", "silver tempest", "crown zenith", "paldea evolved",
-        "obsidian flames", "151", "paradox rift", "temporal forces",
-        "twilight masquerade", "shrouded fable", "stellar crown",
-        "surging sparks", "prismatic evolutions",
-    ]
-    
-    # Build a cleaner query: Pokemon name + card number
-    core_name = t
-    if " - " in core_name:
-        parts = core_name.split(" - ")
-        core_name = parts[0].strip()
-    
-    # Remove any set noise from the core name
-    core_lower = core_name.lower()
-    for noise in set_noise:
-        core_lower = core_lower.replace(noise, " ")
-    
-    # Normalize and combine with card number
-    core_tokens = _WORD_RE.findall(core_lower)
-    
-    # Add card number if found (critical for matching!)
-    if card_number:
-        card_number = re.sub(r"\s*/\s*", "/", card_number)
-        query_text = " ".join(core_tokens) + " " + card_number
-    else:
-        query_text = " ".join(core_tokens)
-    
-    query_text = query_text.strip()
+    # card_name keeps the card number for eBay searching
     card_name = t[:255] if t else title[:255]
+
+    # query_text removes card number for internal matching (avoids duplicates)
+    query_text_base = re.sub(r"\b\d{1,4}[a-z]?\s*/\s*\d{1,4}\b", "", t, flags=re.IGNORECASE).strip()
+    query_text_base = re.sub(r"#\d+", "", query_text_base).strip()
+    query_text = " ".join(_WORD_RE.findall(query_text_base.lower()))
+
     return query_text[:255], card_name
 
 
